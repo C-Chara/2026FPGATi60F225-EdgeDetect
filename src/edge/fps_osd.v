@@ -7,7 +7,7 @@
 //             start of its first display frame ("--" until measured)
 //   THR dddd  edge threshold
 //   FOC dddd  lens focus code (yellow while K1/K2 adjust focus)
-//   MED ON / MED OFF, TNR ON / HI / OFF (temporal noise reduction),
+//   MED ON / MED OFF, TNR ON / HI / HLD / OFF (temporal noise reduction),
 //   NOISE ON (only while salt/pepper injection is on)
 module fps_osd #(
     parameter integer PIXEL_HZ = 74400000,
@@ -152,7 +152,7 @@ module fps_osd #(
     wire [4:0] row_y = rel_row_y % 26;
     wire [3:0] row_letters = (row == 5'd3 || row == 5'd4) ? 4'd8 :
                              (row == 5'd5) ? (median_on ? 4'd6 : 4'd7) :
-                             (row == 5'd6) ? (tnr_mode != 2'd0 ? 4'd6 : 4'd7) :
+                             (row == 5'd6) ? (tnr_mode == 2'd1 || tnr_mode == 2'd2 ? 4'd6 : 4'd7) :
                              (row == 5'd7) ? 4'd8 : 4'd6;
     wire row_shown = (row <= 5'd6) || (row == 5'd7 && noise_on);
     wire [10:0] rel_x = x - 11'd16;
@@ -208,9 +208,10 @@ module fps_osd #(
             endcase
             5'd6: case(letter)
                 0:symbol=G_T; 1:symbol=G_N; 2:symbol=G_R;
-                4:symbol=tnr_mode == 2'd2 ? G_H : G_O;
-                5:symbol=tnr_mode == 2'd2 ? G_I : tnr_mode == 2'd1 ? G_N : G_F;
-                6:symbol=tnr_mode != 2'd0 ? G_BLANK : G_F;
+                4:symbol=tnr_mode[1] ? G_H : G_O;
+                5:symbol=tnr_mode == 2'd3 ? G_L : tnr_mode == 2'd2 ? G_I :
+                         tnr_mode == 2'd1 ? G_N : G_F;
+                6:symbol=tnr_mode == 2'd3 ? G_D : tnr_mode == 2'd0 ? G_F : G_BLANK;
                 default:symbol=G_BLANK;
             endcase
             default: case(letter)

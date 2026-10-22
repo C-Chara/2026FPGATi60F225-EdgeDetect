@@ -97,7 +97,9 @@ module axi4_ctrl #(
     output reg 	[7:0] 	frame_latency_ms = 0, 
     output reg 		frame_latency_valid = 0, 
 
-    //	Temporal filter at run time: 0 off, 1 normal, 2 strong (any clock,
+    //	Temporal filter at run time: 0 off, 1 normal, 2 strong, 3 hold (test:
+    //	every pixel keeps the previous stored value, so the picture must
+    //	freeze if the previous-frame path works) (any clock,
     //	resynchronized; it changes only on a key press).
     input  wire 	[1:0] 	tnr_mode
 );
@@ -410,6 +412,7 @@ module axi4_ctrl #(
 	end
 	wire 			w_tnr_active = (r_tnr_mode_sync != 2'd0) && r_tnr_prev_valid; 
 	wire 			w_tnr_strong = (r_tnr_mode_sync == 2'd2); 
+	wire 			w_tnr_hold = (r_tnr_mode_sync == 2'd3); 
 	
 	function [5:0] tnr_ch; 
 		input [5:0] cur, prev; 
@@ -452,7 +455,7 @@ module axi4_ctrl #(
 	reg 	[C_DATA_LEN-1:0] 	r_tnr_buf [0:C_BURST_LEN-1]; 
 	reg 	[C_DATA_LEN-1:0] 	r_tnr_cur = 0, r_tnr_prev = 0; 
 	reg 	[6:0] 	r_tnr_idx = 0; 
-	reg 			r_tnr_v = 0, r_tnr_en = 0, r_tnr_hi = 0; 
+	reg 			r_tnr_v = 0, r_tnr_en = 0, r_tnr_hi = 0, r_tnr_hold = 0; 
 	wire 	[6:0] 	w_tnr_raddr = (rs_w == ws_w_wdata) ? rc_burst[6:0] + (axi_wvalid && axi_wready) : 7'd0; 
 	always @(posedge axi_clk) begin
 		r_tnr_v <= C_TNR && (rs_w == ws_w_prdata) && axi_rvalid; 
@@ -461,7 +464,9 @@ module axi4_ctrl #(
 		r_tnr_idx <= rc_pbeat[6:0]; 
 		r_tnr_en <= w_tnr_active; 
 		r_tnr_hi <= w_tnr_strong; 
-		if(r_tnr_v) r_tnr_buf[r_tnr_idx] <= r_tnr_en ? tnr_word(r_tnr_cur, r_tnr_prev, r_tnr_hi) : r_tnr_cur; 
+		r_tnr_hold <= w_tnr_hold; 
+		if(r_tnr_v) r_tnr_buf[r_tnr_idx] <= !r_tnr_en ? r_tnr_cur :
+			r_tnr_hold ? r_tnr_prev : tnr_word(r_tnr_cur, r_tnr_prev, r_tnr_hi); 
 		r_tnr_q <= r_tnr_buf[w_tnr_raddr]; 
 	end
 	
