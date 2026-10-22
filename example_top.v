@@ -730,12 +730,14 @@ module example_top
 	// 1 sets the exposure band step to 10 ms for 50 Hz lighting; 0 keeps
 	// the original register table.
 	localparam CAMERA_BAND_50HZ_FIX = 1'b1;
+	// 1: sensor sharpening off, stronger sensor denoise.
+	localparam CAMERA_ISP_LOW_NOISE = 1'b1;
 	I2C_OV5640_1280720_Config #(.SENSOR_TEST_PATTERN(SENSOR_TEST_PATTERN), .CAMERA_SYS_DIV(CAMERA_SYS_DIV), .BAND_50HZ_FIX(CAMERA_BAND_50HZ_FIX),
 		.PLL_MULT(CAMERA_30FPS ? 8'h9e : 8'h69),
 		// Rows in 10 ms and whole 10 ms bands within one frame (740 rows).
 		.B50_STEP(!CAMERA_30FPS ? 10'd148 : CAMERA_SHORT_LINE ? 10'd263 : 10'd222),
 		.B50_MAX_BANDS(!CAMERA_30FPS ? 8'd4 : CAMERA_SHORT_LINE ? 8'd2 : 8'd3),
-		.HTS(CAMERA_HTS)) u_I2C_OV5640_1280720_Config
+		.HTS(CAMERA_HTS), .ISP_LOW_NOISE(CAMERA_ISP_LOW_NOISE)) u_I2C_OV5640_1280720_Config
 	(
 	    .LUT_INDEX  (ov5640_i2c_config_index   ),
 	    .FOCUS_CODE (focus_applied             ),

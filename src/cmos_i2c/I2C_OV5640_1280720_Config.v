@@ -32,7 +32,10 @@ module	I2C_OV5640_1280720_Config #(		//1280*720@60 with AutO/Manual Exposure
             B50_MAX_BANDS = 8'd4,
             PLL_MULT = 8'h69,
             // Total line length in SCLK cycles (active 1280 + blanking).
-            HTS = 16'd1892
+            HTS = 16'd1892,
+            // 1: ISP sharpening off and stronger ISP denoise, so the edge
+            // detector sees less amplified sensor noise on texture.
+            ISP_LOW_NOISE = 1'b0
 )
 (
 	input		[7:0]	LUT_INDEX,
@@ -256,16 +259,16 @@ begin
    	// CIP »ÒªØ∫ÕΩµ‘Î		
 194:     LUT_DATA    =   24'h5300_08;	// CIP sharpen MT threshold 1	
 195:     LUT_DATA    =   24'h5301_30;	// CIP sharpen MT threshold 2	
-196:     LUT_DATA    =   24'h5302_10;	// CIP sharpen MT offset 1	
+196:     LUT_DATA    =   ISP_LOW_NOISE ? 24'h5302_00 : 24'h5302_10;	// CIP sharpen MT offset 1
 197:     LUT_DATA    =   24'h5303_00;	// CIP sharpen MT offset 2	
 198:     LUT_DATA    =   24'h5304_08;	// CIP DNS threshold 1	
 199:     LUT_DATA    =   24'h5305_30;	// CIP DNS threshold 2	
-200:     LUT_DATA    =   24'h5306_08;	// CIP DNS offset 1	
-201:     LUT_DATA    =   24'h5307_16;	// CIP DNS offset 2	
+200:     LUT_DATA    =   ISP_LOW_NOISE ? 24'h5306_20 : 24'h5306_08;	// CIP DNS offset 1
+201:     LUT_DATA    =   ISP_LOW_NOISE ? 24'h5307_30 : 24'h5307_16;	// CIP DNS offset 2
 202:     LUT_DATA    =   24'h5309_08;	// CIP sharpen TH threshold 1	
 203:     LUT_DATA    =   24'h530a_30;	// CIP sharpen TH threshold 2	
-204:     LUT_DATA    =   24'h530b_04;	// CIP sharpen TH offset 1	
-205:     LUT_DATA    =   24'h530c_06;	// CIP sharpen TH offset 2	
+204:     LUT_DATA    =   ISP_LOW_NOISE ? 24'h530b_00 : 24'h530b_04;	// CIP sharpen TH offset 1
+205:     LUT_DATA    =   ISP_LOW_NOISE ? 24'h530c_00 : 24'h530c_06;	// CIP sharpen TH offset 2
 206:     LUT_DATA    =   24'h5025_00;		
 207:     LUT_DATA    =   24'h3008_02;	// wake up from standby, bit[6]	
 
