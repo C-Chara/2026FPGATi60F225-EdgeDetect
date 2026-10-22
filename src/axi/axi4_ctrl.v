@@ -101,7 +101,13 @@ module axi4_ctrl #(
     //	every pixel keeps the previous stored value, so the picture must
     //	freeze if the previous-frame path works) (any clock,
     //	resynchronized; it changes only on a key press).
-    input  wire 	[1:0] 	tnr_mode
+    input  wire 	[1:0] 	tnr_mode, 
+
+    //	Share of stored pixels whose value changed in the last written
+    //	frame, in percent (0..99). With TNR off this is the raw camera
+    //	frame-to-frame change. Valid after the first measured frame.
+    output reg 	[6:0] 	tnr_change_pct = 0, 
+    output reg 		tnr_change_valid = 0
 );
 	
 	//	The display reader and the previous-frame reader share AR/R. Only
@@ -456,6 +462,38 @@ module axi4_ctrl #(
 	reg 	[C_DATA_LEN-1:0] 	r_tnr_cur = 0, r_tnr_prev = 0; 
 	reg 	[6:0] 	r_tnr_idx = 0; 
 	reg 			r_tnr_v = 0, r_tnr_en = 0, r_tnr_hi = 0, r_tnr_hold = 0; 
+	wire 	[C_DATA_LEN-1:0] 	w_tnr_out = !r_tnr_en ? r_tnr_cur :
+		r_tnr_hold ? r_tnr_prev : tnr_word(r_tnr_cur, r_tnr_prev, r_tnr_hi); 
+	
+	//	Changed-pixel count of one frame (at most 1280 * 720 < 2^20).
+	function [3:0] lanes_changed; 
+		input [C_DATA_LEN-1:0] a, b; 
+		integer k; 
+		begin
+			lanes_changed = 0; 
+			for(k = 0; k < C_DATA_LEN / 16; k = k + 1)
+				lanes_changed = lanes_changed + (a[16*k +: 16] != b[16*k +: 16]); 
+		end
+	endfunction
+	reg 	[19:0] 	r_chg_acc = 0; 
+	reg 	[3:0] 	r_chg_beat = 0; 
+	reg 			r_chg_v = 0; 
+	//	percent = count * 100 / 921600 ~= count * 7 / 65536
+	wire 	[22:0] 	w_chg_scaled = ({3'b0, r_chg_acc} << 3) - {3'b0, r_chg_acc}; 
+	always @(posedge axi_clk) begin
+		r_chg_v <= r_tnr_v; 
+		r_chg_beat <= lanes_changed(w_tnr_out, r_tnr_prev); 
+		if(axi_reset) begin
+			r_chg_acc <= 0; tnr_change_pct <= 0; tnr_change_valid <= 0; 
+		end else if(r_wframe_inc) begin
+			tnr_change_pct <= (w_chg_scaled[22:16] > 7'd99) ? 7'd99 : w_chg_scaled[22:16]; 
+			tnr_change_valid <= r_tnr_prev_valid; 
+			r_chg_acc <= 0; 
+		end else if(r_chg_v) begin
+			r_chg_acc <= r_chg_acc + r_chg_beat; 
+		end
+	end
+	
 	wire 	[6:0] 	w_tnr_raddr = (rs_w == ws_w_wdata) ? rc_burst[6:0] + (axi_wvalid && axi_wready) : 7'd0; 
 	always @(posedge axi_clk) begin
 		r_tnr_v <= C_TNR && (rs_w == ws_w_prdata) && axi_rvalid; 
@@ -465,8 +503,7 @@ module axi4_ctrl #(
 		r_tnr_en <= w_tnr_active; 
 		r_tnr_hi <= w_tnr_strong; 
 		r_tnr_hold <= w_tnr_hold; 
-		if(r_tnr_v) r_tnr_buf[r_tnr_idx] <= !r_tnr_en ? r_tnr_cur :
-			r_tnr_hold ? r_tnr_prev : tnr_word(r_tnr_cur, r_tnr_prev, r_tnr_hi); 
+		if(r_tnr_v) r_tnr_buf[r_tnr_idx] <= w_tnr_out; 
 		r_tnr_q <= r_tnr_buf[w_tnr_raddr]; 
 	end
 	

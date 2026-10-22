@@ -8,6 +8,8 @@
 //   THR dddd  edge threshold
 //   FOC dddd  lens focus code (yellow while K1/K2 adjust focus)
 //   MED ON / MED OFF, TNR ON / HI / HLD / OFF (temporal noise reduction),
+//   CHG dd    % of stored camera pixels changed per frame (after TNR)
+//   FLK dddd  edge pixels that appear or disappear per camera frame
 //   NOISE ON (only while salt/pepper injection is on)
 module fps_osd #(
     parameter integer PIXEL_HZ = 74400000,
@@ -26,6 +28,9 @@ module fps_osd #(
     input wire [9:0] focus_code,
     input wire focus_mode,
     input wire [1:0] tnr_mode,
+    input wire [6:0] change_pct,
+    input wire change_valid,
+    input wire [11:0] flicker,
     output wire [23:0] rgb_out
 );
     reg [10:0] x = 0;
@@ -71,6 +76,13 @@ module fps_osd #(
     reg [9:0] focus_rem_1000;
     reg [6:0] focus_rem_100;
     reg [15:0] focus_bcd;
+    reg [7:0] change_bcd;
+    reg change_shown;
+    reg [3:0] flk_thousands, flk_thousands_d, flk_hundreds;
+    reg [9:0] flk_rem_1000;
+    reg [6:0] flk_rem_100;
+    reg [15:0] flk_bcd;
+    wire [6:0] change_tens = change_pct / 7'd10, change_ones = change_pct % 7'd10;
     wire [6:0] latency_clip = latency_ms > 8'd99 ? 7'd99 : latency_ms[6:0];
     wire [6:0] out_tens = out_fps / 7'd10, out_ones = out_fps % 7'd10;
     wire [6:0] latency_tens = latency_clip / 7'd10, latency_ones = latency_clip % 7'd10;
@@ -81,6 +93,9 @@ module fps_osd #(
             out_bcd<=0;latency_bcd<=0;latency_shown<=0;
             focus_thousands<=0;focus_thousands_d<=0;focus_hundreds<=0;
             focus_rem_1000<=0;focus_rem_100<=0;focus_bcd<=0;
+            change_bcd<=0;change_shown<=0;
+            flk_thousands<=0;flk_thousands_d<=0;flk_hundreds<=0;
+            flk_rem_1000<=0;flk_rem_100<=0;flk_bcd<=0;
         end else if(!vs) begin
             thousands<=threshold_in/12'd1000;
             rem_1000<=threshold_in%12'd1000;
@@ -103,12 +118,24 @@ module fps_osd #(
             focus_bcd[11:8]<=focus_hundreds;
             focus_bcd[7:4]<=focus_rem_100/7'd10;
             focus_bcd[3:0]<=focus_rem_100%7'd10;
+            change_shown<=change_valid;
+            change_bcd<={change_tens[3:0], change_ones[3:0]};
+            flk_thousands<=flicker/12'd1000;
+            flk_rem_1000<=flicker%12'd1000;
+            flk_thousands_d<=flk_thousands;
+            flk_hundreds<=flk_rem_1000/10'd100;
+            flk_rem_100<=flk_rem_1000%10'd100;
+            flk_bcd[15:12]<=flk_thousands_d;
+            flk_bcd[11:8]<=flk_hundreds;
+            flk_bcd[7:4]<=flk_rem_100/7'd10;
+            flk_bcd[3:0]<=flk_rem_100%7'd10;
         end
     end
 
     localparam [4:0] G_F=10, G_P=11, G_S=12, G_T=13, G_H=14, G_R=15,
                      G_O=16, G_U=17, G_L=18, G_A=19, G_M=20, G_E=21,
-                     G_D=22, G_N=23, G_I=24, G_DASH=25, G_C=26, G_BLANK=31;
+                     G_D=22, G_N=23, G_I=24, G_DASH=25, G_C=26, G_K=27, G_G=28,
+                     G_BLANK=31;
     function [34:0] glyph;
         input [4:0] n;
         begin
@@ -140,6 +167,8 @@ module fps_osd #(
                 G_I:glyph=35'b01110_00100_00100_00100_00100_00100_01110;
                 G_C:glyph=35'b01110_10001_10000_10000_10000_10001_01110;
                 G_DASH:glyph=35'b00000_00000_00000_11111_00000_00000_00000;
+                G_K:glyph=35'b10001_10010_10100_11000_10100_10010_10001;
+                G_G:glyph=35'b01110_10001_10000_10111_10001_10001_01111;
                 default:glyph=0;
             endcase
         end
@@ -153,10 +182,10 @@ module fps_osd #(
     wire [3:0] row_letters = (row == 5'd3 || row == 5'd4) ? 4'd8 :
                              (row == 5'd5) ? (median_on ? 4'd6 : 4'd7) :
                              (row == 5'd6) ? (tnr_mode == 2'd1 || tnr_mode == 2'd2 ? 4'd6 : 4'd7) :
-                             (row == 5'd7) ? 4'd8 : 4'd6;
-    wire row_shown = (row <= 5'd6) || (row == 5'd7 && noise_on);
+                             (row == 5'd8 || row == 5'd9) ? 4'd8 : 4'd6;
+    wire row_shown = (row <= 5'd8) || (row == 5'd9 && noise_on);
     wire [10:0] rel_x = x - 11'd16;
-    wire box = de && y >= 10'd16 && row <= 5'd7 && row_shown && row_y < 5'd22 &&
+    wire box = de && y >= 10'd16 && row <= 5'd9 && row_shown && row_y < 5'd22 &&
                x >= 11'd16 && rel_x < row_letters * 12;
     wire [3:0] letter = rel_x / 12;
     wire [3:0] gx = (rel_x % 12) >> 1;
@@ -212,6 +241,20 @@ module fps_osd #(
                 5:symbol=tnr_mode == 2'd3 ? G_L : tnr_mode == 2'd2 ? G_I :
                          tnr_mode == 2'd1 ? G_N : G_F;
                 6:symbol=tnr_mode == 2'd3 ? G_D : tnr_mode == 2'd0 ? G_F : G_BLANK;
+                default:symbol=G_BLANK;
+            endcase
+            5'd7: case(letter)
+                0:symbol=G_C; 1:symbol=G_H; 2:symbol=G_G;
+                4:symbol=change_shown ? {1'b0,change_bcd[7:4]} : G_DASH;
+                5:symbol=change_shown ? {1'b0,change_bcd[3:0]} : G_DASH;
+                default:symbol=G_BLANK;
+            endcase
+            5'd8: case(letter)
+                0:symbol=G_F; 1:symbol=G_L; 2:symbol=G_K;
+                4:symbol={1'b0,flk_bcd[15:12]};
+                5:symbol={1'b0,flk_bcd[11:8]};
+                6:symbol={1'b0,flk_bcd[7:4]};
+                7:symbol={1'b0,flk_bcd[3:0]};
                 default:symbol=G_BLANK;
             endcase
             default: case(letter)

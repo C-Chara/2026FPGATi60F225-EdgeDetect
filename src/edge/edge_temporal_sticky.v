@@ -50,7 +50,10 @@ module edge_temporal_sticky #(
     input  wire [11:0] onset_threshold_in,
     output reg  [7:0]  edge_out,
     output reg  [7:0]  gray_out,
-    output reg  [1:0]  direction_out
+    output reg  [1:0]  direction_out,
+    // 1 for one clock when this pixel's decision differs from the
+    // previous pass (an edge pixel appeared or disappeared).
+    output reg         toggle_out
 );
     localparam integer FRAME_PIXELS = H_ACTIVE * V_ACTIVE;
     reg state_ram [0:FRAME_PIXELS-1];
@@ -197,6 +200,7 @@ module edge_temporal_sticky #(
             edge_out <= 8'd0;
             gray_out <= 8'd0;
             direction_out <= 2'd0;
+            toggle_out <= 1'b0;
         end else begin
             vsync_n_d <= vsync_n;
             valid_1 <= pixel_valid;
@@ -267,6 +271,7 @@ module edge_temporal_sticky #(
             if (valid_2) begin
                 edge_out <= keep ? 8'hff : 8'd0;
                 keep_left <= keep;
+                toggle_out <= mid_use && (keep != mid_c);
                 gray_out <= gray_2;
                 direction_out <= direction_2;
             end else begin
@@ -274,6 +279,7 @@ module edge_temporal_sticky #(
                 gray_out <= 8'd0;
                 direction_out <= 2'd0;
                 keep_left <= 1'b0;
+                toggle_out <= 1'b0;
             end
         end
     end

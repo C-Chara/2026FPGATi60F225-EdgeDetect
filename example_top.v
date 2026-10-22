@@ -1006,6 +1006,8 @@ module example_top
 	wire 	[7:0] 	w_axi_tp; 
 	wire 	[7:0] 	w_frame_latency_ms; 
 	wire 			w_frame_latency_valid; 
+	wire 	[6:0] 	w_tnr_change_pct; 
+	wire 			w_tnr_change_valid; 
 	
 	// 1: temporal noise reduction on the stored camera frame (see
 	// axi4_ctrl C_TNR). K1+K2 long hold steps normal -> strong -> off.
@@ -1060,7 +1062,9 @@ module example_top
 		.tp_o 		(w_axi_tp),
 		.frame_latency_ms (w_frame_latency_ms),
 		.frame_latency_valid (w_frame_latency_valid),
-		.tnr_mode (tnr_mode)
+		.tnr_mode (tnr_mode),
+		.tnr_change_pct (w_tnr_change_pct),
+		.tnr_change_valid (w_tnr_change_valid)
 	);
 	assign led_o[3:0] = w_axi_tp; 
 	assign led_o[4] = frame_freeze;
@@ -1274,6 +1278,7 @@ module example_top
     // NMS carries the center pixel's Sobel direction. Delay that direction
     // through hysteresis and the temporal stage to match the final edge pixel.
     wire [1:0] stable_direction;
+    wire edge_toggle;
     reg [1:0] circle_dir_d1, circle_dir_d2, circle_dir_d3, circle_dir_d4;
     always @(posedge clk_pixel or negedge rstn_pixel) begin
         if (!rstn_pixel) begin
@@ -1305,9 +1310,10 @@ module example_top
             .release_threshold_in(edge_low_threshold >> 1),
             .onset_threshold_in(edge_threshold_active),
             .edge_out(stable_edge), .gray_out(stable_gray),
-            .direction_out(stable_direction)
+            .direction_out(stable_direction), .toggle_out(edge_toggle)
         );
     end else begin: temporal_confirm
+        assign edge_toggle = 1'b0;
         edge_frame_hold #(.H_ACTIVE(1276), .V_ACTIVE(720),
             .PEAK_GUARD_ENABLE(1'b1), .PEAK_TOLERANCE(13'd8),
             .TEMPORAL_CONFIRM_ENABLE(1'b1)) u_edge_frame_hold (
@@ -1346,8 +1352,9 @@ module example_top
 	// Mode 1: black background + white edges.
 	// Mode 2: original colour background + red edges.
 	// Mode 3: split screen, original grayscale left, binary edges right.
-	// Mode 4: Sobel gradient magnitude |Gx|+|Gy| as grayscale (clipped at
-	//         255), no threshold: the plain-Sobel display for comparison.
+	// Mode 4: Sobel gradient magnitude |Gx|+|Gy| as grayscale with a soft
+	//         threshold (black below THR/2), no binary decision: the
+	//         plain-Sobel display for comparison.
 	// With the Gaussian stage the gray sideband is the median output, so
 	// take the unfiltered background from the aligned colour pixel instead.
 	wire [7:0] aligned_gray;
@@ -1365,7 +1372,11 @@ module example_top
 	wire [23:0] split_rgb = (diagnostic_lcd_x == 12'd640) ? 24'h00ff00 :
 		(diagnostic_lcd_x < 12'd640) ? {aligned_gray, aligned_gray, aligned_gray} :
 		black_overlay_rgb;
-	wire [7:0] magnitude_gray = (magnitude_d2 > 12'd255) ? 8'hff : magnitude_d2[7:0];
+	// Soft threshold: below THR/2 is black, above it twice the excess.
+	wire [11:0] magnitude_floor = edge_threshold_active >> 1;
+	wire [12:0] magnitude_excess = (magnitude_d2 > magnitude_floor) ?
+		{1'b0, magnitude_d2 - magnitude_floor} << 1 : 13'd0;
+	wire [7:0] magnitude_gray = (magnitude_excess > 13'd255) ? 8'hff : magnitude_excess[7:0];
 	wire [23:0] magnitude_rgb = !hysteresis_valid ? 24'h000000 :
 		{magnitude_gray, magnitude_gray, magnitude_gray};
 	wire [23:0] selected_overlay_rgb =
@@ -1405,12 +1416,50 @@ module example_top
 			frame_latency_pixel_valid <= latency_sync[8];
 		end
 	end
+	// TNR change share (DDR clock): same two-sample agreement as above.
+	(* async_reg = "true" *) reg [7:0] change_meta = 0, change_sync = 0;
+	reg [6:0] change_pct_pixel = 0;
+	reg change_valid_pixel = 0;
+	always @(posedge clk_pixel) begin
+		change_meta <= {w_tnr_change_valid, w_tnr_change_pct};
+		change_sync <= change_meta;
+		if (change_sync == change_meta) begin
+			change_pct_pixel <= change_sync[6:0];
+			change_valid_pixel <= change_sync[7];
+		end
+	end
+	// Edge flicker: toggled edge pixels summed over 60 display frames
+	// (about one second, 30 camera frames), shown per camera frame (/32).
+	reg [19:0] flk_frame = 0;
+	reg [25:0] flk_sum = 0;
+	reg [5:0] flk_frames = 0;
+	reg [11:0] flk_value = 0;
+	reg flk_vs_d = 1;
+	wire [25:0] flk_total = flk_sum + flk_frame;
+	always @(posedge clk_pixel) begin
+		flk_vs_d <= lcd_vs;
+		if (flk_vs_d && !lcd_vs) begin
+			flk_frame <= 20'd0;
+			if (flk_frames == 6'd59) begin
+				flk_frames <= 6'd0;
+				flk_sum <= 26'd0;
+				flk_value <= (flk_total[25:5] > 21'd4095) ? 12'd4095 : flk_total[16:5];
+			end else begin
+				flk_frames <= flk_frames + 6'd1;
+				flk_sum <= flk_total;
+			end
+		end else if (edge_toggle && flk_frame != 20'hfffff) begin
+			flk_frame <= flk_frame + 20'd1;
+		end
+	end
 	fps_osd #(.SHOW_FOCUS(FOCUS_CONTROL_ENABLE)) u_fps_osd (
 		.clk(clk_pixel), .rst_n(rstn_pixel), .vs(edge_vs), .de(edge_de),
 		.rgb_in(edge_rgb), .fps_bcd(camera_fps_bcd), .fps_valid(camera_fps_valid),
 		.threshold_in(edge_threshold_active),
 		.latency_ms(frame_latency_pixel), .latency_valid(frame_latency_pixel_valid),
 		.median_on(median_on), .noise_on(noise_on), .tnr_mode(tnr_mode),
+		.change_pct(change_pct_pixel), .change_valid(change_valid_pixel),
+		.flicker(flk_value),
 		.focus_code(focus_code_pixel), .focus_mode(focus_mode),
 		.rgb_out(edge_fps_rgb)
 	);
