@@ -1122,13 +1122,13 @@ module example_top
 	wire [7:0] camera_fps_bcd;
 	wire camera_fps_valid;
 	wire [11:0] edge_threshold_active;
-	wire [1:0] edge_mode_active;
+	wire [2:0] edge_mode_active;
 	wire median_on, noise_on, focus_mode;
 	wire [11:0] edge_low_threshold = (edge_threshold_active >> 1);
 	// The OV5640 module has a manually screwed lens: its VCM sink is not
 	// connected to a focus motor, so the run-time focus control is off.
 	localparam FOCUS_CONTROL_ENABLE = 1'b0;
-	key_threshold #(.INITIAL_THRESHOLD(EDGE_THRESHOLD), .LAST_MODE(2'd3),
+	key_threshold #(.INITIAL_THRESHOLD(EDGE_THRESHOLD), .LAST_MODE(3'd4),
 		.FOCUS_ENABLE(FOCUS_CONTROL_ENABLE)) u_key_threshold (
 		.clk(clk_pixel), .rst_n(rstn_pixel), .vsync_n(lcd_vs),
 		.key_n(key_n), .threshold_active(edge_threshold_active), .threshold_requested(),
@@ -1346,6 +1346,8 @@ module example_top
 	// Mode 1: black background + white edges.
 	// Mode 2: original colour background + red edges.
 	// Mode 3: split screen, original grayscale left, binary edges right.
+	// Mode 4: Sobel gradient magnitude as grayscale (magnitude / 2, clipped
+	//         at 255), no threshold: the plain-Sobel display for comparison.
 	// With the Gaussian stage the gray sideband is the median output, so
 	// take the unfiltered background from the aligned colour pixel instead.
 	wire [7:0] aligned_gray;
@@ -1363,10 +1365,15 @@ module example_top
 	wire [23:0] split_rgb = (diagnostic_lcd_x == 12'd640) ? 24'h00ff00 :
 		(diagnostic_lcd_x < 12'd640) ? {aligned_gray, aligned_gray, aligned_gray} :
 		black_overlay_rgb;
-	wire [23:0] selected_overlay_rgb = !aligned_rgb_valid ? 24'h000000 :
-		(edge_mode_active == 2'd0) ? gray_overlay_rgb :
-		(edge_mode_active == 2'd1) ? black_overlay_rgb :
-		(edge_mode_active == 2'd2) ? color_overlay_rgb : split_rgb;
+	wire [7:0] magnitude_gray = (magnitude_d2 > 12'd510) ? 8'hff : magnitude_d2[8:1];
+	wire [23:0] magnitude_rgb = !hysteresis_valid ? 24'h000000 :
+		{magnitude_gray, magnitude_gray, magnitude_gray};
+	wire [23:0] selected_overlay_rgb =
+		(edge_mode_active == 3'd4) ? magnitude_rgb :
+		!aligned_rgb_valid ? 24'h000000 :
+		(edge_mode_active == 3'd0) ? gray_overlay_rgb :
+		(edge_mode_active == 3'd1) ? black_overlay_rgb :
+		(edge_mode_active == 3'd2) ? color_overlay_rgb : split_rgb;
 	// Optional colour diagnostic is disabled in the normal white-edge display.
 	wire [11:0] diagnostic_floor = edge_low_threshold >> 1;
 	wire [7:0] diagnostic_gray = {2'b00, hysteresis_gray[7:2]};
