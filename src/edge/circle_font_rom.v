@@ -1,5 +1,6 @@
 `timescale 1ns/1ps
-// Five 20x20 display glyphs for 检测到圆形, rasterized from Microsoft YaHei.
+// 20x20 display glyphs rasterized from Microsoft YaHei: characters 0-4 are
+// 检测到圆形, character 5 is 矩 (for 检测到矩形).
 module circle_font_rom(input wire [2:0] character, input wire [4:0] row,
                        output reg [19:0] pixels);
     always @* begin
@@ -105,6 +106,26 @@ module circle_font_rom(input wire [2:0] character, input wire [4:0] row,
             8'd145: pixels = 20'b01100000110111000000;
             8'd146: pixels = 20'b01000000110110000000;
             8'd147: pixels = 20'b00000000000000000000;
+            8'd160: pixels = 20'b00000000000000000000;
+            8'd161: pixels = 20'b00110000000000000000;
+            8'd162: pixels = 20'b00110000011111111111;
+            8'd163: pixels = 20'b00100000011000000000;
+            8'd164: pixels = 20'b00111111011000000000;
+            8'd165: pixels = 20'b01101100011000000000;
+            8'd166: pixels = 20'b01001100011000000000;
+            8'd167: pixels = 20'b01001100011111111110;
+            8'd168: pixels = 20'b00001100011000000110;
+            8'd169: pixels = 20'b11111111011000000110;
+            8'd170: pixels = 20'b00001000011000000110;
+            8'd171: pixels = 20'b00001000011000000110;
+            8'd172: pixels = 20'b00011100011111111110;
+            8'd173: pixels = 20'b00011110011000000110;
+            8'd174: pixels = 20'b00010011011000000000;
+            8'd175: pixels = 20'b00110011011000000000;
+            8'd176: pixels = 20'b00100001011000000000;
+            8'd177: pixels = 20'b01100000011111111111;
+            8'd178: pixels = 20'b01000000000000000000;
+            8'd179: pixels = 20'b00000000000000000000;
             default: pixels = 20'b0;
         endcase
     end

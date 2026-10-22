@@ -1498,17 +1498,41 @@ module example_top
 	wire [10:0] circle_x;
 	wire [9:0] circle_y, circle_radius;
 	wire [23:0] circle_annotated_rgb;
-	circle_geometry_detector u_circle_geometry_detector (
+	// Circle criteria (2026-10-22): 14 of 16 sectors (was 15), at most 8
+	// hits on the inner/outer validation rings (was 6). A rectangle search
+	// runs on the same occupancy grid.
+	wire rect_found;
+	wire [10:0] rect_x0, rect_x1;
+	wire [9:0] rect_y0, rect_y1;
+	wire [23:0] rect_annotated_rgb;
+	circle_geometry_detector #(.MIN_SCORE(10), .FINAL_SCORE(14), .MAX_SIDE_HITS(8))
+		u_circle_geometry_detector (
 		.clk(clk_pixel), .rst_n(rstn_pixel), .vsync_n(lcd_vs), .de(lcd_de),
 		.edge_pixel(stable_edge != 8'd0), .edge_direction(stable_direction),
 		.found(circle_found), .center_x(circle_x), .center_y(circle_y),
-		.radius_px(circle_radius)
+		.radius_px(circle_radius),
+		.rect_found(rect_found), .rect_x0(rect_x0), .rect_x1(rect_x1),
+		.rect_y0(rect_y0), .rect_y1(rect_y1)
+	);
+	// Rectangle label and outline first, then the circle label on top.
+	wire [10:0] rect_cx = (rect_x0 + rect_x1) >> 1;
+	wire [9:0] rect_cy = (rect_y0 + rect_y1) >> 1;
+	wire [10:0] rect_half_w = (rect_x1 - rect_x0) >> 1;
+	circle_label_osd #(.SHAPE(1'b1), .DRAW_BOX(1'b1)) u_rect_label_osd (
+		.clk(clk_pixel), .rst_n(rstn_pixel), .vsync_n(lcd_vs), .de(lcd_de),
+		.rgb_in(FPS_OSD_ENABLE ? edge_fps_rgb : edge_rgb),
+		.found(rect_found), .center_x(rect_cx), .center_y(rect_cy),
+		.radius_px(rect_half_w[9:0]),
+		.box_x0(rect_x0), .box_x1(rect_x1), .box_y0(rect_y0), .box_y1(rect_y1),
+		.rgb_out(rect_annotated_rgb)
 	);
 	circle_label_osd u_circle_label_osd (
 		.clk(clk_pixel), .rst_n(rstn_pixel), .vsync_n(lcd_vs), .de(lcd_de),
-		.rgb_in(FPS_OSD_ENABLE ? edge_fps_rgb : edge_rgb),
+		.rgb_in(rect_annotated_rgb),
 		.found(circle_found), .center_x(circle_x), .center_y(circle_y),
-		.radius_px(circle_radius), .rgb_out(circle_annotated_rgb)
+		.radius_px(circle_radius),
+		.box_x0(11'd0), .box_x1(11'd0), .box_y0(10'd0), .box_y1(10'd0),
+		.rgb_out(circle_annotated_rgb)
 	);
 	wire use_edge_timing = 1'b0;
 	wire hdmi_vs = lcd_vs;
