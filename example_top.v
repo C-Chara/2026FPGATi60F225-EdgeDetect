@@ -1008,10 +1008,10 @@ module example_top
 	wire 			w_frame_latency_valid; 
 	
 	// 1: temporal noise reduction on the stored camera frame (see
-	// axi4_ctrl C_TNR). K1+K2 long hold switches it off and on.
+	// axi4_ctrl C_TNR). K1+K2 long hold steps normal -> strong -> off.
 	localparam TNR_ENABLE = 1'b1;
-	wire tnr_key_on;
-	wire tnr_on = TNR_ENABLE && tnr_key_on;
+	wire [1:0] tnr_key_mode;
+	wire [1:0] tnr_mode = TNR_ENABLE ? tnr_key_mode : 2'd0;
 	//	Write in 8 bits. Read in 16 bits. 
 	axi4_ctrl #(.C_RD_END_ADDR(1280 * 2 * 720), .C_W_WIDTH(CSI_DATA_WIDTH), .C_R_WIDTH(16), .C_ID_LEN(4),
 		.C_TNR(TNR_ENABLE)) u_axi4_ctrl (
@@ -1060,7 +1060,7 @@ module example_top
 		.tp_o 		(w_axi_tp),
 		.frame_latency_ms (w_frame_latency_ms),
 		.frame_latency_valid (w_frame_latency_valid),
-		.tnr_on (tnr_on)
+		.tnr_mode (tnr_mode)
 	);
 	assign led_o[3:0] = w_axi_tp; 
 	assign led_o[4] = frame_freeze;
@@ -1136,7 +1136,7 @@ module example_top
 		.freeze(frame_freeze),
 		.median_on(median_on), .noise_on(noise_on),
 		.focus_mode(focus_mode), .focus_code(focus_code_pixel),
-		.tnr_on(tnr_key_on)
+		.tnr_mode(tnr_key_mode)
 	);
 	// Smooth grayscale with a 3x3 median (and optionally a 3x3 Gaussian),
 	// then use Sobel + NMS before hysteresis linking. NMS keeps only the
@@ -1403,7 +1403,7 @@ module example_top
 		.rgb_in(edge_rgb), .fps_bcd(camera_fps_bcd), .fps_valid(camera_fps_valid),
 		.threshold_in(edge_threshold_active),
 		.latency_ms(frame_latency_pixel), .latency_valid(frame_latency_pixel_valid),
-		.median_on(median_on), .noise_on(noise_on), .tnr_on(tnr_on),
+		.median_on(median_on), .noise_on(noise_on), .tnr_mode(tnr_mode),
 		.focus_code(focus_code_pixel), .focus_mode(focus_mode),
 		.rgb_out(edge_fps_rgb)
 	);
