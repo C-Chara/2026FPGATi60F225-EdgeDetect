@@ -437,19 +437,46 @@ module axi4_ctrl #(
 	//	Each 16-bit lane is one RGB565 pixel {R[4:0], G[5:0], B[4:0]} (the
 	//	same lanes the 16-bit display FIFO reads), so every lane is filtered
 	//	the same way.
-	function [C_DATA_LEN-1:0] tnr_word; 
+	//	A lane is moving when any channel differs by more than TH.
+	function lane_moving; 
+		input [15:0] cur, prev; 
+		input strong; 
+		reg [5:0] dr, dg, db; 
+		begin
+			dr = (cur[15:11] > prev[15:11]) ? cur[15:11] - prev[15:11] : prev[15:11] - cur[15:11]; 
+			dg = (cur[10:5] > prev[10:5]) ? cur[10:5] - prev[10:5] : prev[10:5] - cur[10:5]; 
+			db = (cur[4:0] > prev[4:0]) ? cur[4:0] - prev[4:0] : prev[4:0] - cur[4:0]; 
+			lane_moving = (dr > (strong ? C_TNR_HI_TH5 : C_TNR_TH5)) ||
+				(dg > (strong ? C_TNR_HI_TH6 : C_TNR_TH6)) ||
+				(db > (strong ? C_TNR_HI_TH5 : C_TNR_TH5)); 
+		end
+	endfunction
+	function [3:0] moving_lanes; 
 		input [C_DATA_LEN-1:0] cur, prev; 
 		input strong; 
+		integer k; 
+		begin
+			moving_lanes = 0; 
+			for(k = 0; k < C_DATA_LEN / 16; k = k + 1)
+				moving_lanes = moving_lanes + lane_moving(cur[16*k +: 16], prev[16*k +: 16], strong); 
+		end
+	endfunction
+	
+	//	leak = 1 drops the dead band for this word (step 1 LSB toward cur),
+	//	so a held value always converges and cannot keep an old pattern.
+	function [C_DATA_LEN-1:0] tnr_word; 
+		input [C_DATA_LEN-1:0] cur, prev; 
+		input strong, leak; 
 		integer k; 
 		reg [5:0] r, g, b; 
 		begin
 			for(k = 0; k < C_DATA_LEN / 16; k = k + 1) begin
 				r = tnr_ch({1'b0, cur[16*k+11 +: 5]}, {1'b0, prev[16*k+11 +: 5]},
-					strong ? C_TNR_HI_DEAD5 : C_TNR_DEAD5, strong ? C_TNR_HI_TH5 : C_TNR_TH5); 
+					leak ? 0 : strong ? C_TNR_HI_DEAD5 : C_TNR_DEAD5, strong ? C_TNR_HI_TH5 : C_TNR_TH5); 
 				g = tnr_ch(cur[16*k+5 +: 6], prev[16*k+5 +: 6],
-					strong ? C_TNR_HI_DEAD6 : C_TNR_DEAD6, strong ? C_TNR_HI_TH6 : C_TNR_TH6); 
+					leak ? 0 : strong ? C_TNR_HI_DEAD6 : C_TNR_DEAD6, strong ? C_TNR_HI_TH6 : C_TNR_TH6); 
 				b = tnr_ch({1'b0, cur[16*k +: 5]}, {1'b0, prev[16*k +: 5]},
-					strong ? C_TNR_HI_DEAD5 : C_TNR_DEAD5, strong ? C_TNR_HI_TH5 : C_TNR_TH5); 
+					leak ? 0 : strong ? C_TNR_HI_DEAD5 : C_TNR_DEAD5, strong ? C_TNR_HI_TH5 : C_TNR_TH5); 
 				tnr_word[16*k +: 16] = {r[4:0], g, b[4:0]}; 
 			end
 		end
@@ -462,8 +489,26 @@ module axi4_ctrl #(
 	reg 	[C_DATA_LEN-1:0] 	r_tnr_cur = 0, r_tnr_prev = 0; 
 	reg 	[6:0] 	r_tnr_idx = 0; 
 	reg 			r_tnr_v = 0, r_tnr_en = 0, r_tnr_hi = 0, r_tnr_hold = 0; 
+	//	Motion is decided per 8-pixel word: two or more moving pixels in this
+	//	word, or a moving word just to its left, take the whole word from the
+	//	camera. Otherwise a dark detail uncovered next to a moving object
+	//	(text leaving a dark background) could stay inside the dead band and
+	//	remain as a ghost. A pseudo-random 1/16 of the words also drop the
+	//	dead band each frame, so any leftover pattern fades within a second.
+	reg 			r_tnr_left_moving = 0; 
+	reg 	[7:0] 	r_tnr_lfsr = 8'h5a; 
+	wire 			w_tnr_moving = moving_lanes(r_tnr_cur, r_tnr_prev, r_tnr_hi) >= 4'd2; 
+	wire 			w_tnr_leak = (r_tnr_lfsr[3:0] == 4'd0); 
 	wire 	[C_DATA_LEN-1:0] 	w_tnr_out = !r_tnr_en ? r_tnr_cur :
-		r_tnr_hold ? r_tnr_prev : tnr_word(r_tnr_cur, r_tnr_prev, r_tnr_hi); 
+		r_tnr_hold ? r_tnr_prev :
+		(w_tnr_moving || r_tnr_left_moving) ? r_tnr_cur :
+		tnr_word(r_tnr_cur, r_tnr_prev, r_tnr_hi, w_tnr_leak); 
+	always @(posedge axi_clk) begin
+		if(r_tnr_v) begin
+			r_tnr_left_moving <= w_tnr_moving; 
+			r_tnr_lfsr <= {r_tnr_lfsr[6:0], r_tnr_lfsr[7] ^ r_tnr_lfsr[5] ^ r_tnr_lfsr[4] ^ r_tnr_lfsr[3]}; 
+		end
+	end
 	
 	//	Changed-pixel count of one frame (at most 1280 * 720 < 2^20).
 	function [3:0] lanes_changed; 
