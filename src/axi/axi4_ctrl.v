@@ -29,7 +29,12 @@ module axi4_ctrl #(
 			C_TNR_DEAD5   = 1, 	//	R and B (5 bits)
 			C_TNR_TH5     = 3, 
 			C_TNR_DEAD6   = 2, 	//	G (6 bits)
-			C_TNR_TH6     = 6
+			C_TNR_TH6     = 6, 
+			//	Strong setting (tnr_mode 2).
+			C_TNR_HI_DEAD5 = 3, 
+			C_TNR_HI_TH5   = 8, 
+			C_TNR_HI_DEAD6 = 6, 
+			C_TNR_HI_TH6   = 16
 )(
     input  wire                 axi_clk         ,
     input  wire                 axi_reset       ,
@@ -92,8 +97,9 @@ module axi4_ctrl #(
     output reg 	[7:0] 	frame_latency_ms = 0, 
     output reg 		frame_latency_valid = 0, 
 
-    //	Temporal filter on/off at run time (any clock, resynchronized).
-    input  wire 		tnr_on
+    //	Temporal filter at run time: 0 off, 1 normal, 2 strong (any clock,
+    //	resynchronized; it changes only on a key press).
+    input  wire 	[1:0] 	tnr_mode
 );
 	
 	//	The display reader and the previous-frame reader share AR/R. Only
@@ -397,9 +403,13 @@ module axi4_ctrl #(
 	
 	////////////////////////////////////////////////////////////////
 	//	Temporal filter
-	(* async_reg = "true" *) reg 	[1:0] 	r_tnr_on_sync = 0; 
-	always @(posedge axi_clk) r_tnr_on_sync <= {r_tnr_on_sync[0], tnr_on}; 
-	wire 			w_tnr_active = r_tnr_on_sync[1] && r_tnr_prev_valid; 
+	(* async_reg = "true" *) reg 	[1:0] 	r_tnr_mode_meta = 0, r_tnr_mode_sync = 0; 
+	always @(posedge axi_clk) begin
+		r_tnr_mode_meta <= tnr_mode; 
+		r_tnr_mode_sync <= r_tnr_mode_meta; 
+	end
+	wire 			w_tnr_active = (r_tnr_mode_sync != 2'd0) && r_tnr_prev_valid; 
+	wire 			w_tnr_strong = (r_tnr_mode_sync == 2'd2); 
 	
 	function [5:0] tnr_ch; 
 		input [5:0] cur, prev; 
@@ -420,13 +430,17 @@ module axi4_ctrl #(
 	//	the same way.
 	function [C_DATA_LEN-1:0] tnr_word; 
 		input [C_DATA_LEN-1:0] cur, prev; 
+		input strong; 
 		integer k; 
 		reg [5:0] r, g, b; 
 		begin
 			for(k = 0; k < C_DATA_LEN / 16; k = k + 1) begin
-				r = tnr_ch({1'b0, cur[16*k+11 +: 5]}, {1'b0, prev[16*k+11 +: 5]}, C_TNR_DEAD5, C_TNR_TH5); 
-				g = tnr_ch(cur[16*k+5 +: 6], prev[16*k+5 +: 6], C_TNR_DEAD6, C_TNR_TH6); 
-				b = tnr_ch({1'b0, cur[16*k +: 5]}, {1'b0, prev[16*k +: 5]}, C_TNR_DEAD5, C_TNR_TH5); 
+				r = tnr_ch({1'b0, cur[16*k+11 +: 5]}, {1'b0, prev[16*k+11 +: 5]},
+					strong ? C_TNR_HI_DEAD5 : C_TNR_DEAD5, strong ? C_TNR_HI_TH5 : C_TNR_TH5); 
+				g = tnr_ch(cur[16*k+5 +: 6], prev[16*k+5 +: 6],
+					strong ? C_TNR_HI_DEAD6 : C_TNR_DEAD6, strong ? C_TNR_HI_TH6 : C_TNR_TH6); 
+				b = tnr_ch({1'b0, cur[16*k +: 5]}, {1'b0, prev[16*k +: 5]},
+					strong ? C_TNR_HI_DEAD5 : C_TNR_DEAD5, strong ? C_TNR_HI_TH5 : C_TNR_TH5); 
 				tnr_word[16*k +: 16] = {r[4:0], g, b[4:0]}; 
 			end
 		end
@@ -438,7 +452,7 @@ module axi4_ctrl #(
 	reg 	[C_DATA_LEN-1:0] 	r_tnr_buf [0:C_BURST_LEN-1]; 
 	reg 	[C_DATA_LEN-1:0] 	r_tnr_cur = 0, r_tnr_prev = 0; 
 	reg 	[6:0] 	r_tnr_idx = 0; 
-	reg 			r_tnr_v = 0, r_tnr_en = 0; 
+	reg 			r_tnr_v = 0, r_tnr_en = 0, r_tnr_hi = 0; 
 	wire 	[6:0] 	w_tnr_raddr = (rs_w == ws_w_wdata) ? rc_burst[6:0] + (axi_wvalid && axi_wready) : 7'd0; 
 	always @(posedge axi_clk) begin
 		r_tnr_v <= C_TNR && (rs_w == ws_w_prdata) && axi_rvalid; 
@@ -446,7 +460,8 @@ module axi4_ctrl #(
 		r_tnr_prev <= axi_rdata; 
 		r_tnr_idx <= rc_pbeat[6:0]; 
 		r_tnr_en <= w_tnr_active; 
-		if(r_tnr_v) r_tnr_buf[r_tnr_idx] <= r_tnr_en ? tnr_word(r_tnr_cur, r_tnr_prev) : r_tnr_cur; 
+		r_tnr_hi <= w_tnr_strong; 
+		if(r_tnr_v) r_tnr_buf[r_tnr_idx] <= r_tnr_en ? tnr_word(r_tnr_cur, r_tnr_prev, r_tnr_hi) : r_tnr_cur; 
 		r_tnr_q <= r_tnr_buf[w_tnr_raddr]; 
 	end
 	
