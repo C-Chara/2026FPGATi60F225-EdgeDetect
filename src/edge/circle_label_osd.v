@@ -2,9 +2,13 @@
 
 // Display-only annotation. The detector updates its result at VSYNC, so the
 // label position remains fixed for an entire HDMI frame.
+// SHAPE 0 writes 检测到圆形, SHAPE 1 writes 检测到矩形. With DRAW_BOX the
+// rectangle box_x0..box_x1 / box_y0..box_y1 is outlined (2 pixels, green).
 module circle_label_osd #(
     parameter integer H_ACTIVE = 1280,
-    parameter integer V_ACTIVE = 720
+    parameter integer V_ACTIVE = 720,
+    parameter SHAPE = 1'b0,
+    parameter DRAW_BOX = 1'b0
 )(
     input wire clk,
     input wire rst_n,
@@ -15,6 +19,8 @@ module circle_label_osd #(
     input wire [10:0] center_x,
     input wire [9:0] center_y,
     input wire [9:0] radius_px,
+    input wire [10:0] box_x0, box_x1,
+    input wire [9:0] box_y0, box_y1,
     output wire [23:0] rgb_out
 );
     reg [10:0] x;
@@ -51,12 +57,19 @@ module circle_label_osd #(
     wire [4:0] glyph_x = text_x % 7'd20;
     wire [4:0] glyph_y = box_y-5'd2;
     wire [19:0] glyph_pixels;
+    wire [2:0] font_character = (SHAPE && character == 3'd3) ? 3'd5 : character;
     circle_font_rom u_circle_font_rom (
-        .character(character), .row(glyph_y), .pixels(glyph_pixels)
+        .character(font_character), .row(glyph_y), .pixels(glyph_pixels)
     );
     wire ink = text_area && glyph_pixels[19-glyph_x];
+    wire in_outer = x + 11'd1 >= box_x0 && x <= box_x1 + 11'd1 &&
+                    y + 10'd1 >= box_y0 && y <= box_y1 + 10'd1;
+    wire in_inner = x >= box_x0 + 11'd1 && x + 11'd1 <= box_x1 &&
+                    y >= box_y0 + 10'd1 && y + 10'd1 <= box_y1;
+    wire outline = DRAW_BOX && found && de && in_outer && !in_inner;
     assign rgb_out = border ? 24'h00ffff :
                      ink ? 24'hffff00 :
-                     in_box ? 24'h101820 : rgb_in;
+                     in_box ? 24'h101820 :
+                     outline ? 24'h00ff00 : rgb_in;
 endmodule
 
