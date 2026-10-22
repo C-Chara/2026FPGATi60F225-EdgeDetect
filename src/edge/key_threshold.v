@@ -5,7 +5,7 @@
 // K1+K2 held together for the long-press time: toggle focus mode. In focus
 // mode K1/K2 short presses move the lens focus code instead of the threshold.
 // With FOCUS_ENABLE=0 the same long combined hold steps tnr_mode instead:
-//   1 (normal) -> 2 (strong) -> 3 (hold test) -> 0 (off) -> 1.
+//   1 -> 2 -> 3 -> 0 -> 1 (the top level decides what each value means).
 // K1+K2 pressed and released together: next median demo state, cycling
 //   median on -> median on + salt/pepper noise -> median off + noise.
 // A combined press never changes the threshold, mode or freeze.

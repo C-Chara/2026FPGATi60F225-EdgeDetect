@@ -8,6 +8,7 @@
 //   THR dddd  edge threshold
 //   FOC dddd  lens focus code (yellow while K1/K2 adjust focus)
 //   MED ON / MED OFF, TNR ON / HI / HLD / OFF (temporal noise reduction),
+//   FRG ON / FRG OFF  isolated edge fragment removal
 //   CHG dd    % of stored camera pixels changed per frame (after TNR)
 //   FLK dddd  edge pixels that appear or disappear per camera frame
 //   NOISE ON (only while salt/pepper injection is on)
@@ -28,6 +29,7 @@ module fps_osd #(
     input wire [9:0] focus_code,
     input wire focus_mode,
     input wire [1:0] tnr_mode,
+    input wire fragment_on,
     input wire [6:0] change_pct,
     input wire change_valid,
     input wire [11:0] flicker,
@@ -182,10 +184,11 @@ module fps_osd #(
     wire [3:0] row_letters = (row == 5'd3 || row == 5'd4) ? 4'd8 :
                              (row == 5'd5) ? (median_on ? 4'd6 : 4'd7) :
                              (row == 5'd6) ? (tnr_mode == 2'd1 || tnr_mode == 2'd2 ? 4'd6 : 4'd7) :
-                             (row == 5'd8 || row == 5'd9) ? 4'd8 : 4'd6;
-    wire row_shown = (row <= 5'd8) || (row == 5'd9 && noise_on);
+                             (row == 5'd7) ? (fragment_on ? 4'd6 : 4'd7) :
+                             (row == 5'd9 || row == 5'd10) ? 4'd8 : 4'd6;
+    wire row_shown = (row <= 5'd9) || (row == 5'd10 && noise_on);
     wire [10:0] rel_x = x - 11'd16;
-    wire box = de && y >= 10'd16 && row <= 5'd9 && row_shown && row_y < 5'd22 &&
+    wire box = de && y >= 10'd16 && row <= 5'd10 && row_shown && row_y < 5'd22 &&
                x >= 11'd16 && rel_x < row_letters * 12;
     wire [3:0] letter = rel_x / 12;
     wire [3:0] gx = (rel_x % 12) >> 1;
@@ -244,12 +247,19 @@ module fps_osd #(
                 default:symbol=G_BLANK;
             endcase
             5'd7: case(letter)
+                0:symbol=G_F; 1:symbol=G_R; 2:symbol=G_G;
+                4:symbol=G_O;
+                5:symbol=fragment_on ? G_N : G_F;
+                6:symbol=fragment_on ? G_BLANK : G_F;
+                default:symbol=G_BLANK;
+            endcase
+            5'd8: case(letter)
                 0:symbol=G_C; 1:symbol=G_H; 2:symbol=G_G;
                 4:symbol=change_shown ? {1'b0,change_bcd[7:4]} : G_DASH;
                 5:symbol=change_shown ? {1'b0,change_bcd[3:0]} : G_DASH;
                 default:symbol=G_BLANK;
             endcase
-            5'd8: case(letter)
+            5'd9: case(letter)
                 0:symbol=G_F; 1:symbol=G_L; 2:symbol=G_K;
                 4:symbol={1'b0,flk_bcd[15:12]};
                 5:symbol={1'b0,flk_bcd[11:8]};

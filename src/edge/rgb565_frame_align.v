@@ -3,7 +3,7 @@
 // Delay the original RGB565 image to the center pixel of the live edge chain.
 // Its measured phase is ROW_DELAY active video rows plus PIXEL_DELAY clocks.
 // The row ring buffer reads the old pixel before overwriting it.
-// ROW_DELAY may be 1 to 4.
+// ROW_DELAY may be 1 to 6.
 module rgb565_frame_align #(
     parameter integer H_ACTIVE = 1280,
     parameter integer ROW_DELAY = 3,
@@ -18,18 +18,13 @@ module rgb565_frame_align #(
     output wire pixel_valid_out
 );
     localparam integer BUFFER_PIXELS = ROW_DELAY * H_ACTIVE;
-    localparam [12:0] BANK_ONE = H_ACTIVE;
-    localparam [12:0] BANK_TWO = 2 * H_ACTIVE;
-    localparam [12:0] BANK_THREE = 3 * H_ACTIVE;
     reg [15:0] line_ring [0:BUFFER_PIXELS-1];
     reg [15:0] line_read_q;
     reg [10:0] column;
-    reg [1:0] row_bank;
+    reg [2:0] row_bank;
     reg [2:0] rows_seen;
     reg read_valid_q;
-    wire [12:0] bank_base = (row_bank == 2'd0) ? 13'd0 :
-                             (row_bank == 2'd1) ? BANK_ONE :
-                             (row_bank == 2'd2) ? BANK_TWO : BANK_THREE;
+    reg [12:0] bank_base;
     wire [12:0] ram_address = bank_base + column;
 
     // Keep RAM and its read register outside the resettable control process
@@ -44,20 +39,28 @@ module rgb565_frame_align #(
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             column <= 11'd0;
-            row_bank <= 2'd0;
+            row_bank <= 3'd0;
+            bank_base <= 13'd0;
             rows_seen <= 3'd0;
             read_valid_q <= 1'b0;
         end else begin
             read_valid_q <= pixel_valid && (rows_seen == ROW_DELAY);
             if (!vsync_n) begin
                 column <= 11'd0;
-                row_bank <= 2'd0;
+                row_bank <= 3'd0;
+                bank_base <= 13'd0;
                 rows_seen <= 3'd0;
                 read_valid_q <= 1'b0;
             end else if (pixel_valid) begin
                 if (column == H_ACTIVE-1) begin
                     column <= 11'd0;
-                    row_bank <= (row_bank == ROW_DELAY-1) ? 2'd0 : row_bank + 2'd1;
+                    if (row_bank == ROW_DELAY-1) begin
+                        row_bank <= 3'd0;
+                        bank_base <= 13'd0;
+                    end else begin
+                        row_bank <= row_bank + 3'd1;
+                        bank_base <= bank_base + H_ACTIVE;
+                    end
                     if (rows_seen != ROW_DELAY)
                         rows_seen <= rows_seen + 3'd1;
                 end else begin
