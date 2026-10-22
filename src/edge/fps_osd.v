@@ -7,7 +7,8 @@
 //             start of its first display frame ("--" until measured)
 //   THR dddd  edge threshold
 //   FOC dddd  lens focus code (yellow while K1/K2 adjust focus)
-//   MED ON / MED OFF, NOISE ON (only while salt/pepper injection is on)
+//   MED ON / MED OFF, TNR ON / TNR OFF (temporal noise reduction),
+//   NOISE ON (only while salt/pepper injection is on)
 module fps_osd #(
     parameter integer PIXEL_HZ = 74400000,
     // 0 hides the FOC line and moves the lines below it up.
@@ -24,6 +25,7 @@ module fps_osd #(
     input wire noise_on,
     input wire [9:0] focus_code,
     input wire focus_mode,
+    input wire tnr_on,
     output wire [23:0] rgb_out
 );
     reg [10:0] x = 0;
@@ -150,10 +152,11 @@ module fps_osd #(
     wire [4:0] row_y = rel_row_y % 26;
     wire [3:0] row_letters = (row == 5'd3 || row == 5'd4) ? 4'd8 :
                              (row == 5'd5) ? (median_on ? 4'd6 : 4'd7) :
-                             (row == 5'd6) ? 4'd8 : 4'd6;
-    wire row_shown = (row <= 5'd5) || (row == 5'd6 && noise_on);
+                             (row == 5'd6) ? (tnr_on ? 4'd6 : 4'd7) :
+                             (row == 5'd7) ? 4'd8 : 4'd6;
+    wire row_shown = (row <= 5'd6) || (row == 5'd7 && noise_on);
     wire [10:0] rel_x = x - 11'd16;
-    wire box = de && y >= 10'd16 && row <= 5'd6 && row_shown && row_y < 5'd22 &&
+    wire box = de && y >= 10'd16 && row <= 5'd7 && row_shown && row_y < 5'd22 &&
                x >= 11'd16 && rel_x < row_letters * 12;
     wire [3:0] letter = rel_x / 12;
     wire [3:0] gx = (rel_x % 12) >> 1;
@@ -201,6 +204,13 @@ module fps_osd #(
                 4:symbol=G_O;
                 5:symbol=median_on ? G_N : G_F;
                 6:symbol=median_on ? G_BLANK : G_F;
+                default:symbol=G_BLANK;
+            endcase
+            5'd6: case(letter)
+                0:symbol=G_T; 1:symbol=G_N; 2:symbol=G_R;
+                4:symbol=G_O;
+                5:symbol=tnr_on ? G_N : G_F;
+                6:symbol=tnr_on ? G_BLANK : G_F;
                 default:symbol=G_BLANK;
             endcase
             default: case(letter)

@@ -15,7 +15,21 @@ module axi4_ctrl #(
 			
 			C_W_WIDTH     = 64, 
 			C_R_WIDTH     = 8, 
-			C_AXI_HZ      = 96000000
+			C_AXI_HZ      = 96000000, 
+			
+			//	Temporal noise reduction on the stored RGB565 frame. Before each
+			//	write burst the same 2 KB of the previous stored frame is read
+			//	back, and every colour channel is filtered against it:
+			//	  |cur - prev| <= DEAD        keep prev (sensor noise)
+			//	  DEAD < |cur - prev| <= TH   prev steps 1 LSB toward cur
+			//	  |cur - prev| > TH           take cur (motion)
+			//	The stored frame is the filter state, so both the displayed
+			//	image and the edge chain see the filtered pixels.
+			C_TNR         = 0, 
+			C_TNR_DEAD5   = 1, 	//	R and B (5 bits)
+			C_TNR_TH5     = 3, 
+			C_TNR_DEAD6   = 2, 	//	G (6 bits)
+			C_TNR_TH6     = 6
 )(
     input  wire                 axi_clk         ,
     input  wire                 axi_reset       ,
@@ -52,7 +66,7 @@ module axi4_ctrl #(
     output       [ 3:0]      axi_arcache     ,
     output       [ 2:0]      axi_arprot      ,
     output       [ 3:0]      axi_arqos       ,
-    output reg                  axi_arvalid     ,
+    output wire                 axi_arvalid     ,
     input  wire                 axi_arready     ,
     
     input  wire     [C_ID_LEN-1:0]      axi_rid         ,
@@ -76,13 +90,32 @@ module axi4_ctrl #(
 
     // Time from a written frame's EOF until the reader starts that frame.
     output reg 	[7:0] 	frame_latency_ms = 0, 
-    output reg 		frame_latency_valid = 0
+    output reg 		frame_latency_valid = 0, 
+
+    //	Temporal filter on/off at run time (any clock, resynchronized).
+    input  wire 		tnr_on
 );
+	
+	//	The display reader and the previous-frame reader share AR/R. Only
+	//	one read burst is in flight at a time; r_prev_busy marks the
+	//	previous-frame burst from its AR until its RLAST.
+	reg 			r_disp_arvalid = 0, r_prev_arvalid = 0, r_prev_busy = 0; 
+	assign axi_arvalid = r_disp_arvalid | r_prev_arvalid; 
+	//	A display burst accepted by the controller and not yet finished.
+	//	Unlike the display FSM this is not cleared by the per-frame FIFO
+	//	reset, so its beats can never be taken for previous-frame data.
+	reg 			r_disp_inflight = 0; 
+	always @(posedge axi_clk) begin
+		if(axi_reset) r_disp_inflight <= 0; 
+		else if(axi_arready && ~r_prev_busy) r_disp_inflight <= 1; 
+		else if(axi_rvalid && axi_rlast && ~r_prev_busy) r_disp_inflight <= 0; 
+	end
+	reg 	[C_DATA_LEN-1:0] 	r_tnr_q = 0; 	//	filtered word for the current write beat
 	
 	initial begin
 		axi_awvalid <= 0; 
 		axi_wvalid <= 0; 
-		axi_arvalid <= 0; 
+		r_disp_arvalid <= 0; 
 	end
 
 	assign axi_awid    = {C_ID_LEN{1'b0}};
@@ -155,6 +188,18 @@ module axi4_ctrl #(
 	
 	
 	
+	//	The frame finished last (r_wframe_index_last is not updated when
+	//	the reader switches at the same clock).
+	reg 	[1:0] 	r_tnr_prev_index = 0; 
+	reg 			r_tnr_prev_valid = 0; 
+	always @(posedge axi_clk) begin
+		if(axi_reset) begin
+			r_tnr_prev_index <= 0; r_tnr_prev_valid <= 0; 
+		end else if(r_wframe_inc) begin
+			r_tnr_prev_index <= rc_wframe_index; r_tnr_prev_valid <= 1; 
+		end
+	end
+	
 	////////////////////////////////////////////////////////////////
 	//	Frame latency monitor (diagnostic only, does not affect scheduling).
 	reg 	[16:0] 	rc_ms_tick = 0; 
@@ -201,6 +246,15 @@ module axi4_ctrl #(
 	wire 	[3:0] 	ws_w_wdata = 1; 
 	wire 	[3:0] 	ws_w_winc = 2; 
 	wire 	[3:0] 	ws_w_eof = 3; 
+	wire 	[3:0] 	ws_w_prd = 4; 		//	TNR: wait for the read port
+	wire 	[3:0] 	ws_w_prdata = 5; 	//	TNR: previous frame in, filtered words to buffer
+	wire 	[3:0] 	ws_w_pdrain = 6; 	//	TNR: let the buffer pipeline finish
+	
+	//	Display reader wants the port (same condition as its IDLE state).
+	wire 			w_disp_want; 
+	wire 			w_disp_idle; 
+	reg 	[7:0] 	rc_pbeat = 0; 
+	reg 	[1:0] 	rc_pdrain = 0; 
 
 	//	Write Pointer. Burst bytes is always C_ADDR_INC. 
 	reg 	[C_BUF_SIZE-1:0] 	rc_w_ptr = 0; 
@@ -225,8 +279,15 @@ module axi4_ctrl #(
 			r_wframe_sync <= 0; 
 			r_weof_pending <= 0; 
 			r_wframe_inc <= 0; 
+			r_prev_arvalid <= 0; 
+			r_prev_busy <= 0; 
+			rc_pbeat <= 0; 
+			rc_pdrain <= 0; 
 			
 		end else begin
+			if(axi_arready && r_prev_arvalid) begin
+				r_prev_arvalid <= 0; 
+			end
 			rc_w_eof <= 0; 
 			r_wframe_inc <= 0; 
 			
@@ -247,16 +308,16 @@ module axi4_ctrl #(
 						rc_burst <= 0; 
 						r_w_rst <= 0; 
 						
-						if(~w_wfifo_pempty) begin
-							axi_awvalid <= 1; 
-							axi_wvalid <= 1; 
-							rs_w <= ws_w_wdata; 
-						
-						end else if(r_weof_pending && (~w_wfifo_empty)) begin
-							//	There's some data in the FIFO. write last. 
-							axi_awvalid <= 1; 
-							axi_wvalid <= 1; 
-							rs_w <= ws_w_wdata; 
+						if(~w_wfifo_pempty || (r_weof_pending && (~w_wfifo_empty))) begin
+							//	A full burst, or the last data at EOF. With TNR,
+							//	read the previous frame first.
+							if(C_TNR) begin
+								rs_w <= ws_w_prd; 
+							end else begin
+								axi_awvalid <= 1; 
+								axi_wvalid <= 1; 
+								rs_w <= ws_w_wdata; 
+							end
 							
 						end else if(r_weof_pending) begin
 							//	EOF. Reset FIFO. Increment write pointer. 
@@ -295,14 +356,99 @@ module axi4_ctrl #(
 						rc_w_ptr <= rc_w_ptr + C_ADDR_INC; 
 						rs_w <= ws_w_idle; 
 					end
+				
+				ws_w_prd: begin
+						//	Take the read port only while the display reader is
+						//	idle and does not want it (the display has priority).
+						rc_pbeat <= 0; 
+						if(w_disp_idle && ~w_disp_want && ~r_prev_busy && ~r_disp_inflight) begin
+							r_prev_arvalid <= 1; 
+							r_prev_busy <= 1; 
+							rs_w <= ws_w_prdata; 
+						end
+					end
+				
+				ws_w_prdata: begin
+						if(axi_rvalid) rc_pbeat <= rc_pbeat + 1; 
+						if(axi_rvalid && axi_rlast) begin
+							r_prev_busy <= 0; 
+							rc_pdrain <= 0; 
+							rs_w <= ws_w_pdrain; 
+						end
+					end
+				
+				ws_w_pdrain: begin
+						rc_pdrain <= rc_pdrain + 1; 
+						if(&rc_pdrain) begin
+							axi_awvalid <= 1; 
+							axi_wvalid <= 1; 
+							rs_w <= ws_w_wdata; 
+						end
+					end
 			endcase
 		end
 	end
 	assign axi_awaddr = C_BASE_ADDR + {rc_wframe_index, rc_w_ptr}; 
-	assign axi_wdata = w_wfifo_rdata; 
+	assign axi_wdata = C_TNR ? r_tnr_q : w_wfifo_rdata; 
 	assign axi_wlast = (rc_burst >= C_BURST_LEN - 1); 
 	
-	assign w_wfifo_ren = axi_wvalid && axi_wready; 
+	//	With TNR the camera words are taken while the previous frame arrives.
+	assign w_wfifo_ren = C_TNR ? ((rs_w == ws_w_prdata) && axi_rvalid) : (axi_wvalid && axi_wready); 
+	
+	////////////////////////////////////////////////////////////////
+	//	Temporal filter
+	(* async_reg = "true" *) reg 	[1:0] 	r_tnr_on_sync = 0; 
+	always @(posedge axi_clk) r_tnr_on_sync <= {r_tnr_on_sync[0], tnr_on}; 
+	wire 			w_tnr_active = r_tnr_on_sync[1] && r_tnr_prev_valid; 
+	
+	function [5:0] tnr_ch; 
+		input [5:0] cur, prev; 
+		input [5:0] dead, th; 
+		reg [5:0] diff; 
+		reg up; 
+		begin
+			up = cur > prev; 
+			diff = up ? cur - prev : prev - cur; 
+			if(diff <= dead) tnr_ch = prev; 
+			else if(diff <= th) tnr_ch = up ? prev + 1'b1 : prev - 1'b1; 
+			else tnr_ch = cur; 
+		end
+	endfunction
+	
+	//	Each 16-bit lane is one RGB565 pixel {R[4:0], G[5:0], B[4:0]} (the
+	//	same lanes the 16-bit display FIFO reads), so every lane is filtered
+	//	the same way.
+	function [C_DATA_LEN-1:0] tnr_word; 
+		input [C_DATA_LEN-1:0] cur, prev; 
+		integer k; 
+		reg [5:0] r, g, b; 
+		begin
+			for(k = 0; k < C_DATA_LEN / 16; k = k + 1) begin
+				r = tnr_ch({1'b0, cur[16*k+11 +: 5]}, {1'b0, prev[16*k+11 +: 5]}, C_TNR_DEAD5, C_TNR_TH5); 
+				g = tnr_ch(cur[16*k+5 +: 6], prev[16*k+5 +: 6], C_TNR_DEAD6, C_TNR_TH6); 
+				b = tnr_ch({1'b0, cur[16*k +: 5]}, {1'b0, prev[16*k +: 5]}, C_TNR_DEAD5, C_TNR_TH5); 
+				tnr_word[16*k +: 16] = {r[4:0], g, b[4:0]}; 
+			end
+		end
+	endfunction
+	
+	//	Stage 1 registers the camera word and the previous-frame word; stage 2
+	//	writes the filtered word into the burst buffer. The write burst then
+	//	reads the buffer one word ahead (r_tnr_q holds the current beat).
+	reg 	[C_DATA_LEN-1:0] 	r_tnr_buf [0:C_BURST_LEN-1]; 
+	reg 	[C_DATA_LEN-1:0] 	r_tnr_cur = 0, r_tnr_prev = 0; 
+	reg 	[6:0] 	r_tnr_idx = 0; 
+	reg 			r_tnr_v = 0, r_tnr_en = 0; 
+	wire 	[6:0] 	w_tnr_raddr = (rs_w == ws_w_wdata) ? rc_burst[6:0] + (axi_wvalid && axi_wready) : 7'd0; 
+	always @(posedge axi_clk) begin
+		r_tnr_v <= C_TNR && (rs_w == ws_w_prdata) && axi_rvalid; 
+		r_tnr_cur <= w_wfifo_rdata; 
+		r_tnr_prev <= axi_rdata; 
+		r_tnr_idx <= rc_pbeat[6:0]; 
+		r_tnr_en <= w_tnr_active; 
+		if(r_tnr_v) r_tnr_buf[r_tnr_idx] <= r_tnr_en ? tnr_word(r_tnr_cur, r_tnr_prev) : r_tnr_cur; 
+		r_tnr_q <= r_tnr_buf[w_tnr_raddr]; 
+	end
 	
 	
 	assign tp_o[1:0] = {rs_w[1:0]}; 
@@ -553,7 +699,7 @@ always @(posedge axi_clk or posedge r_rfifo_rst)
 begin
     if(r_rfifo_rst) begin
         rd_state <= S_READ_IDLE;
-	  axi_arvalid <= 0; 
+	  r_disp_arvalid <= 0; 
 	  r_rd_pend <= 0; 
     end else
     begin
@@ -561,10 +707,10 @@ begin
 	
 	
 	if(axi_arready) begin
-		axi_arvalid <= 0; 
+		r_disp_arvalid <= 0; 
 	end else begin
 	end
-	if(axi_rvalid && axi_rlast) begin
+	if(axi_rvalid && axi_rlast && ~r_prev_busy) begin
 		 r_rd_pend <= 0; 
 	end else begin
 	end
@@ -573,7 +719,7 @@ begin
             S_READ_IDLE : 
             begin
 			//	Continue if RFIFO ~Full. 
-                if(rfifo_wr_rst_busy_dly[15] && (araddr < C_RD_END_ADDR)&&(~rfifo_wfull)) begin	//	rfifo_wcnt < 10'd256))
+                if(w_disp_want && ~r_prev_busy) begin	//	rfifo_wcnt < 10'd256))
                     rd_state <= S_READ_ADDR;
                 end else
                     rd_state <= S_READ_IDLE;
@@ -581,14 +727,14 @@ begin
 		
             S_READ_ADDR : 
             begin
-				axi_arvalid <= 1; 
+				r_disp_arvalid <= 1; 
 				r_rd_pend <= 1; 
                 rd_state <= S_READ_DATA;
             end
             S_READ_DATA : 
             begin
 			//	Return when ~arvalid && ~rd_pend. 
-			if((~axi_arvalid) && (~r_rd_pend))
+			if((~r_disp_arvalid) && (~r_rd_pend))
                 //if((axi_rvalid == 1'b1)&&(axi_rready == 1'b1)&&(rdata_cnt == C_BURST_LEN))
                     rd_state <= S_READ_IDLE;
                 else
@@ -608,14 +754,16 @@ begin
         araddr <= 0;
     else
     begin
-        if((axi_arvalid == 1'b1)&&(axi_arready == 1'b1))
+        if((r_disp_arvalid == 1'b1)&&(axi_arready == 1'b1))
             araddr <= araddr + C_ADDR_INC;
         else
             araddr <= araddr;
     end
 end
 
-assign axi_araddr = C_BASE_ADDR + {rc_rframe_index, araddr};
+assign axi_araddr = r_prev_busy ? (C_BASE_ADDR + {r_tnr_prev_index, rc_w_ptr}) : (C_BASE_ADDR + {rc_rframe_index, araddr});
+assign w_disp_want = rfifo_wr_rst_busy_dly[15] && (araddr < C_RD_END_ADDR) && (~rfifo_wfull);
+assign w_disp_idle = (rd_state == S_READ_IDLE);
 
 
 reg             [8:0]           rdata_cnt_dly;
@@ -646,7 +794,7 @@ begin
         rfifo_wenb <= 1'b0;
     else
     begin
-        if((axi_rvalid == 1'b1)&&(axi_rready == 1'b1))
+        if((axi_rvalid == 1'b1)&&(axi_rready == 1'b1)&&(~r_prev_busy))
             rfifo_wenb <= 1'b1;
         else
             rfifo_wenb <= 1'b0;

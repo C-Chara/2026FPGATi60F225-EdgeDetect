@@ -731,7 +731,7 @@ module example_top
 	// the original register table.
 	localparam CAMERA_BAND_50HZ_FIX = 1'b1;
 	// 1: sensor sharpening off, stronger sensor denoise.
-	localparam CAMERA_ISP_LOW_NOISE = 1'b1;
+	localparam CAMERA_ISP_LOW_NOISE = 1'b0;
 	I2C_OV5640_1280720_Config #(.SENSOR_TEST_PATTERN(SENSOR_TEST_PATTERN), .CAMERA_SYS_DIV(CAMERA_SYS_DIV), .BAND_50HZ_FIX(CAMERA_BAND_50HZ_FIX),
 		.PLL_MULT(CAMERA_30FPS ? 8'h9e : 8'h69),
 		// Rows in 10 ms and whole 10 ms bands within one frame (740 rows).
@@ -1007,8 +1007,14 @@ module example_top
 	wire 	[7:0] 	w_frame_latency_ms; 
 	wire 			w_frame_latency_valid; 
 	
+	// 1: temporal noise reduction on the stored camera frame (see
+	// axi4_ctrl C_TNR). K1+K2 long hold switches it off and on.
+	localparam TNR_ENABLE = 1'b1;
+	wire tnr_key_on;
+	wire tnr_on = TNR_ENABLE && tnr_key_on;
 	//	Write in 8 bits. Read in 16 bits. 
-	axi4_ctrl #(.C_RD_END_ADDR(1280 * 2 * 720), .C_W_WIDTH(CSI_DATA_WIDTH), .C_R_WIDTH(16), .C_ID_LEN(4)) u_axi4_ctrl (
+	axi4_ctrl #(.C_RD_END_ADDR(1280 * 2 * 720), .C_W_WIDTH(CSI_DATA_WIDTH), .C_R_WIDTH(16), .C_ID_LEN(4),
+		.C_TNR(TNR_ENABLE)) u_axi4_ctrl (
 
 		.axi_clk        (w_ddr3_ui_clk            ),
 		.axi_reset      (w_ddr3_ui_rst            ),
@@ -1053,7 +1059,8 @@ module example_top
 		
 		.tp_o 		(w_axi_tp),
 		.frame_latency_ms (w_frame_latency_ms),
-		.frame_latency_valid (w_frame_latency_valid)
+		.frame_latency_valid (w_frame_latency_valid),
+		.tnr_on (tnr_on)
 	);
 	assign led_o[3:0] = w_axi_tp; 
 	assign led_o[4] = frame_freeze;
@@ -1128,7 +1135,8 @@ module example_top
 		.mode_active(edge_mode_active), .mode_requested(),
 		.freeze(frame_freeze),
 		.median_on(median_on), .noise_on(noise_on),
-		.focus_mode(focus_mode), .focus_code(focus_code_pixel)
+		.focus_mode(focus_mode), .focus_code(focus_code_pixel),
+		.tnr_on(tnr_key_on)
 	);
 	// Smooth grayscale with a 3x3 median (and optionally a 3x3 Gaussian),
 	// then use Sobel + NMS before hysteresis linking. NMS keeps only the
@@ -1395,7 +1403,7 @@ module example_top
 		.rgb_in(edge_rgb), .fps_bcd(camera_fps_bcd), .fps_valid(camera_fps_valid),
 		.threshold_in(edge_threshold_active),
 		.latency_ms(frame_latency_pixel), .latency_valid(frame_latency_pixel_valid),
-		.median_on(median_on), .noise_on(noise_on),
+		.median_on(median_on), .noise_on(noise_on), .tnr_on(tnr_on),
 		.focus_code(focus_code_pixel), .focus_mode(focus_mode),
 		.rgb_out(edge_fps_rgb)
 	);
