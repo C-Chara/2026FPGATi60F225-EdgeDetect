@@ -1498,14 +1498,17 @@ module example_top
 	wire [10:0] circle_x;
 	wire [9:0] circle_y, circle_radius;
 	wire [23:0] circle_annotated_rgb;
-	// Circle criteria (2026-10-22): 14 of 16 sectors (was 15), at most 8
-	// hits on the inner/outer validation rings (was 6). A rectangle search
-	// runs on the same occupancy grid.
+	// Circle criteria (2026-10-22): every sector sampled at five radii, at
+	// least 13 of 16 sectors (was 15), at most 12 hits on the validation
+	// rings at r +/- 7 cells (was 6 at +/- 5). Ellipses up to about 1.2:1
+	// pass, 1.3:1 and rounded rectangles do not (cell-level model). A
+	// rectangle search runs on the same occupancy grid.
 	wire rect_found;
 	wire [10:0] rect_x0, rect_x1;
 	wire [9:0] rect_y0, rect_y1;
 	wire [23:0] rect_annotated_rgb;
-	circle_geometry_detector #(.MIN_SCORE(10), .FINAL_SCORE(14), .MAX_SIDE_HITS(8))
+	circle_geometry_detector #(.MIN_SCORE(9), .FINAL_SCORE(13), .MAX_SIDE_HITS(12),
+		.RING(7))
 		u_circle_geometry_detector (
 		.clk(clk_pixel), .rst_n(rstn_pixel), .vsync_n(lcd_vs), .de(lcd_de),
 		.edge_pixel(stable_edge != 8'd0), .edge_direction(stable_direction),

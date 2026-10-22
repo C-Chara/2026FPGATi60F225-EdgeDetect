@@ -26,6 +26,8 @@ module circle_geometry_detector #(
     parameter integer MIN_SCORE = 11,
     parameter integer FINAL_SCORE = 15,
     parameter integer MAX_SIDE_HITS = 6,
+    // Radius offset of the inner/outer validation rings, in grid cells.
+    parameter integer RING = 5,
     parameter RECT_ENABLE = 1'b1,
     parameter integer RECT_MIN_W = 10,
     parameter integer RECT_MIN_H = 8,
@@ -85,12 +87,12 @@ module circle_geometry_detector #(
     reg [5:0] trial_first_r;
     reg refining;
     reg [3:0] sector;
-    reg [1:0] tap;
+    // Search samples each sector at the five radii r-2..r+2 (no gaps between
+    // the 4-cell radius steps); validation uses taps 0 and 1.
+    reg [2:0] tap;
     wire [5:0] sample_r = (state == ST_VALIDATE) ?
-                          (tap == 0 ? trial_r-6'd5 : trial_r+6'd5) :
-                          (tap == 2'd0) ? trial_r-(refining ? 6'd1 : 6'd2) :
-                          (tap == 2'd1) ? trial_r :
-                          trial_r+(refining ? 6'd1 : 6'd2);
+                          (tap == 0 ? trial_r-RING : trial_r+RING) :
+                          trial_r + {3'd0, tap} - 6'd2;
     wire [5:0] shallow_r = (sample_r * 6 + 8) >> 4;
     wire [5:0] diagonal_r = (sample_r * 11 + 8) >> 4;
     wire [5:0] steep_r = (sample_r * 15 + 8) >> 4;
@@ -146,7 +148,7 @@ module circle_geometry_detector #(
 
     reg pending, pending_bounds, pending_validation;
     reg [3:0] pending_sector;
-    reg [1:0] pending_tap;
+    reg [2:0] pending_tap;
     reg [8:0] pending_x;
     reg [7:0] pending_y;
     reg [5:0] pending_r;
@@ -186,7 +188,7 @@ module circle_geometry_detector #(
                                 {2'd0,completed_mask[10]} +
                                 {2'd0,completed_mask[14]};
     wire last_trial = trial_x == trial_last_x && trial_y == trial_last_y &&
-                      trial_r == trial_last_r && sector == 15 && tap == 2;
+                      trial_r == trial_last_r && sector == 15 && tap == 4;
 
     reg track_valid;
     reg [8:0] track_x;
@@ -348,7 +350,7 @@ module circle_geometry_detector #(
                 if (pending_bounds && sampled_cell[0])
                     side_hits<=side_hits+6'd1;
             end else if (pending) begin
-                if (pending_tap == 2) begin
+                if (pending_tap == 4) begin
                     sector_hit <= 0;
                     sector_mask[pending_sector] <= sector_hit || hit;
                     if (pending_sector == 15) begin
@@ -443,7 +445,7 @@ module circle_geometry_detector #(
                 end
                 ST_SEARCH: begin
                     if (last_trial) state<=ST_DRAIN;
-                    else if (tap != 2) tap<=tap+2'd1;
+                    else if (tap != 4) tap<=tap+3'd1;
                     else begin
                         tap<=0;
                         if (sector != 15) sector<=sector+4'd1;
