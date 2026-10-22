@@ -1012,8 +1012,13 @@ module example_top
 	// 1: temporal noise reduction on the stored camera frame (see
 	// axi4_ctrl C_TNR). K1+K2 long hold steps normal -> strong -> off.
 	localparam TNR_ENABLE = 1'b1;
+	// K1+K2 long hold steps four states (power-up first):
+	//   TNR ON + FRG ON -> TNR ON + FRG OFF -> TNR OFF + FRG OFF -> TNR OFF + FRG ON
+	// (FRG = isolated edge fragment removal, see edge_fragment_filter).
 	wire [1:0] tnr_key_mode;
-	wire [1:0] tnr_mode = TNR_ENABLE ? tnr_key_mode : 2'd0;
+	wire tnr_key_on = (tnr_key_mode == 2'd1) || (tnr_key_mode == 2'd2);
+	wire fragment_key_on = (tnr_key_mode == 2'd1) || (tnr_key_mode == 2'd0);
+	wire [1:0] tnr_mode = (TNR_ENABLE && tnr_key_on) ? 2'd1 : 2'd0;
 	//	Write in 8 bits. Read in 16 bits. 
 	axi4_ctrl #(.C_RD_END_ADDR(1280 * 2 * 720), .C_W_WIDTH(CSI_DATA_WIDTH), .C_R_WIDTH(16), .C_ID_LEN(4),
 		.C_TNR(TNR_ENABLE)) u_axi4_ctrl (
@@ -1329,10 +1334,33 @@ module example_top
 	// Match the original RGB565 pixel to its edge result. The median + NMS
 	// chain measured three image rows and 24 pixel clocks; the Gaussian
 	// stage adds one row and four clocks, the sticky temporal stage one clock.
-	localparam integer ALIGN_ROW_DELAY = GAUSSIAN_ENABLE ? 4 : 3;
+	localparam integer EDGE_ROW_DELAY = GAUSSIAN_ENABLE ? 4 : 3;
 	// The fast median network is six clocks shorter than the full sort.
-	localparam integer ALIGN_PIXEL_DELAY = 24 + (GAUSSIAN_ENABLE ? 4 : 0) +
+	localparam integer EDGE_PIXEL_DELAY = 24 + (GAUSSIAN_ENABLE ? 4 : 0) +
 		(TEMPORAL_STICKY_ENABLE ? 1 : 0) - (MEDIAN_FAST ? 6 : 0);
+	// 1: remove isolated edge fragments (7x5 window, two more rows and six
+	// clocks of delay). 0: display the temporal stage output directly.
+	localparam FRAGMENT_FILTER_ENABLE = 1'b1;
+	localparam integer ALIGN_ROW_DELAY = EDGE_ROW_DELAY + (FRAGMENT_FILTER_ENABLE ? 2 : 0);
+	localparam integer ALIGN_PIXEL_DELAY = EDGE_PIXEL_DELAY + (FRAGMENT_FILTER_ENABLE ? 6 : 0);
+	// Pixel-valid of the stable edge stream: the display request delayed
+	// the same way the align module delays it (one read clock plus
+	// EDGE_PIXEL_DELAY).
+	reg [EDGE_PIXEL_DELAY:0] edge_valid_pipe = 0;
+	always @(posedge clk_pixel) edge_valid_pipe <= {edge_valid_pipe[EDGE_PIXEL_DELAY-1:0], lcd_request};
+	wire edge_stream_valid = edge_valid_pipe[EDGE_PIXEL_DELAY];
+	wire final_edge, final_toggle;
+	generate if (FRAGMENT_FILTER_ENABLE) begin: fragment_filter
+		edge_fragment_filter #(.H_ACTIVE(1280), .MIN_COUNT(4)) u_edge_fragment_filter (
+			.clk(clk_pixel), .rst_n(rstn_pixel), .vsync_n(lcd_vs),
+			.enable(fragment_key_on), .pixel_valid(edge_stream_valid),
+			.edge_in(stable_edge != 8'd0), .toggle_in(edge_toggle),
+			.edge_out(final_edge), .toggle_out(final_toggle)
+		);
+	end else begin: no_fragment_filter
+		assign final_edge = stable_edge != 8'd0;
+		assign final_toggle = edge_toggle;
+	end endgenerate
 	wire [15:0] aligned_rgb565;
 	wire aligned_rgb_valid;
 	rgb565_frame_align #(.H_ACTIVE(1280), .ROW_DELAY(ALIGN_ROW_DELAY),
@@ -1360,14 +1388,14 @@ module example_top
 	wire [7:0] aligned_gray;
 	rgb565_gray u_aligned_gray (.rgb565(aligned_rgb565), .gray(aligned_gray));
 	wire [7:0] background_gray = GAUSSIAN_ENABLE ? aligned_gray : stable_gray;
-	wire [7:0] gray_overlay_pixel = (stable_edge != 8'd0) ?
+	wire [7:0] gray_overlay_pixel = final_edge ?
 		8'hff : {1'b0, background_gray[7:1]};
 	wire [23:0] gray_overlay_rgb = {
 		gray_overlay_pixel, gray_overlay_pixel, gray_overlay_pixel
 	};
-	wire [23:0] black_overlay_rgb = (stable_edge != 8'd0) ?
+	wire [23:0] black_overlay_rgb = final_edge ?
 		24'hffffff : 24'h000000;
-	wire [23:0] color_overlay_rgb = (stable_edge != 8'd0) ?
+	wire [23:0] color_overlay_rgb = final_edge ?
 		24'hff0000 : aligned_rgb;
 	wire [23:0] split_rgb = (diagnostic_lcd_x == 12'd640) ? 24'h00ff00 :
 		(diagnostic_lcd_x < 12'd640) ? {aligned_gray, aligned_gray, aligned_gray} :
@@ -1448,7 +1476,7 @@ module example_top
 				flk_frames <= flk_frames + 6'd1;
 				flk_sum <= flk_total;
 			end
-		end else if (edge_toggle && flk_frame != 20'hfffff) begin
+		end else if (final_toggle && flk_frame != 20'hfffff) begin
 			flk_frame <= flk_frame + 20'd1;
 		end
 	end
@@ -1458,6 +1486,7 @@ module example_top
 		.threshold_in(edge_threshold_active),
 		.latency_ms(frame_latency_pixel), .latency_valid(frame_latency_pixel_valid),
 		.median_on(median_on), .noise_on(noise_on), .tnr_mode(tnr_mode),
+		.fragment_on(FRAGMENT_FILTER_ENABLE && fragment_key_on),
 		.change_pct(change_pct_pixel), .change_valid(change_valid_pixel),
 		.flicker(flk_value),
 		.focus_code(focus_code_pixel), .focus_mode(focus_mode),
