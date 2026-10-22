@@ -18,8 +18,8 @@ module key_threshold #(
     parameter [11:0] STEP=12'd1,
     parameter [11:0] MIN_THRESHOLD=12'd16,
     parameter [11:0] MAX_THRESHOLD=12'd1024,
-    parameter [1:0] INITIAL_MODE=2'd2,
-    parameter [1:0] LAST_MODE=2'd2,
+    parameter [2:0] INITIAL_MODE=3'd2,
+    parameter [2:0] LAST_MODE=3'd2,
     parameter [9:0] INITIAL_FOCUS=10'd256,
     parameter [9:0] FOCUS_STEP=10'd32,
     // 0: K1+K2 long hold does nothing (fixed-focus lens).
@@ -29,8 +29,8 @@ module key_threshold #(
     input wire [1:0] key_n,
     output reg [11:0] threshold_active,
     output wire [11:0] threshold_requested,
-    output reg [1:0] mode_active,
-    output wire [1:0] mode_requested,
+    output reg [2:0] mode_active,
+    output wire [2:0] mode_requested,
     output reg freeze,
     output reg median_on,
     output reg noise_on,
@@ -44,7 +44,7 @@ module key_threshold #(
     reg [25:0] hold_count,hold_count_1;
     reg long_fired,long_fired_1;
     reg [11:0] requested;
-    reg [1:0] requested_mode;
+    reg [2:0] requested_mode;
     reg both_d;
     reg [25:0] combo_count;
     reg combo_long;
@@ -87,7 +87,7 @@ module key_threshold #(
             end else if(!stable[0] && !key_sync[0] && !long_fired) begin
                 if(hold_count==LONG_PRESS_CYCLES-1) begin
                     long_fired<=1;
-                    requested_mode<=requested_mode==LAST_MODE ? 2'd0 : requested_mode+2'd1;
+                    requested_mode<=requested_mode==LAST_MODE ? 3'd0 : requested_mode+3'd1;
                 end else hold_count<=hold_count+1'b1;
             end
             // K2 mirrors K1: a long hold toggles the freeze request only.
