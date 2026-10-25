@@ -1012,13 +1012,14 @@ module example_top
 	// 1: temporal noise reduction on the stored camera frame (see
 	// axi4_ctrl C_TNR). K1+K2 long hold steps normal -> strong -> off.
 	localparam TNR_ENABLE = 1'b1;
-	// K1+K2 long hold steps four states (power-up first):
-	//   TNR ON + FRG ON -> TNR ON + FRG OFF -> TNR OFF + FRG OFF -> TNR OFF + FRG ON
-	// (FRG = isolated edge fragment removal, see edge_fragment_filter).
+	// TNR and fragment removal are always on (measured on the board:
+	// edge flicker ~300 -> ~7 pixels per frame). The K1+K2 long hold now
+	// switches shape recognition (circle / rectangle labels): off at
+	// power-up for the basic demo, on for the advanced part.
 	wire [1:0] tnr_key_mode;
-	wire tnr_key_on = (tnr_key_mode == 2'd1) || (tnr_key_mode == 2'd2);
-	wire fragment_key_on = (tnr_key_mode == 2'd1) || (tnr_key_mode == 2'd0);
-	wire [1:0] tnr_mode = (TNR_ENABLE && tnr_key_on) ? 2'd1 : 2'd0;
+	wire recognition_on = (tnr_key_mode == 2'd2);
+	wire fragment_key_on = 1'b1;
+	wire [1:0] tnr_mode = TNR_ENABLE ? 2'd1 : 2'd0;
 	//	Write in 8 bits. Read in 16 bits. 
 	axi4_ctrl #(.C_RD_END_ADDR(1280 * 2 * 720), .C_W_WIDTH(CSI_DATA_WIDTH), .C_R_WIDTH(16), .C_ID_LEN(4),
 		.C_TNR(TNR_ENABLE)) u_axi4_ctrl (
@@ -1486,7 +1487,7 @@ module example_top
 		.threshold_in(edge_threshold_active),
 		.latency_ms(frame_latency_pixel), .latency_valid(frame_latency_pixel_valid),
 		.median_on(median_on), .noise_on(noise_on), .tnr_mode(tnr_mode),
-		.fragment_on(FRAGMENT_FILTER_ENABLE && fragment_key_on),
+		.recognition_on(recognition_on),
 		.change_pct(change_pct_pixel), .change_valid(change_valid_pixel),
 		.flicker(flk_value),
 		.focus_code(focus_code_pixel), .focus_mode(focus_mode),
@@ -1524,7 +1525,7 @@ module example_top
 	circle_label_osd #(.SHAPE(1'b1), .DRAW_BOX(1'b1)) u_rect_label_osd (
 		.clk(clk_pixel), .rst_n(rstn_pixel), .vsync_n(lcd_vs), .de(lcd_de),
 		.rgb_in(FPS_OSD_ENABLE ? edge_fps_rgb : edge_rgb),
-		.found(rect_found), .center_x(rect_cx), .center_y(rect_cy),
+		.found(rect_found && recognition_on), .center_x(rect_cx), .center_y(rect_cy),
 		.radius_px(rect_half_w[9:0]),
 		.box_x0(rect_x0), .box_x1(rect_x1), .box_y0(rect_y0), .box_y1(rect_y1),
 		.rgb_out(rect_annotated_rgb)
@@ -1532,7 +1533,7 @@ module example_top
 	circle_label_osd u_circle_label_osd (
 		.clk(clk_pixel), .rst_n(rstn_pixel), .vsync_n(lcd_vs), .de(lcd_de),
 		.rgb_in(rect_annotated_rgb),
-		.found(circle_found), .center_x(circle_x), .center_y(circle_y),
+		.found(circle_found && recognition_on), .center_x(circle_x), .center_y(circle_y),
 		.radius_px(circle_radius),
 		.box_x0(11'd0), .box_x1(11'd0), .box_y0(10'd0), .box_y1(10'd0),
 		.rgb_out(circle_annotated_rgb)
