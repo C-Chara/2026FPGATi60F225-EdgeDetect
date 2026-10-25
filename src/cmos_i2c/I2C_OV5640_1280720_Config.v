@@ -35,7 +35,9 @@ module	I2C_OV5640_1280720_Config #(		//1280*720@60 with AutO/Manual Exposure
             HTS = 16'd1892,
             // 1: ISP sharpening off and stronger ISP denoise, so the edge
             // detector sees less amplified sensor noise on texture.
-            ISP_LOW_NOISE = 1'b0
+            ISP_LOW_NOISE = 1'b0,
+            // 1: Y8 output (luma only, one byte per pixel) instead of RGB565.
+            FORMAT_Y8 = 1'b0
 )
 (
 	input		[7:0]	LUT_INDEX,
@@ -112,8 +114,8 @@ begin
 53:     LUT_DATA    =   24'h3004_ff;	// enable clocks	
 54:     LUT_DATA    =   24'h300e_58;	// MIPI power down, DVP enable	
 55:     LUT_DATA    =   24'h302e_00;		
-56:     LUT_DATA    =   24'h4300_61; 	//	RGB. 	00;	// Bayer BGBG  	//h4300_6f(千兆网模式)--------------------------------------------------------
-57:     LUT_DATA    =   24'h501f_01;	//	RGB	03;	// Bayer	
+56:     LUT_DATA    =   FORMAT_Y8 ? 24'h4300_10 : 24'h4300_61;	// Y8 / RGB565
+57:     LUT_DATA    =   FORMAT_Y8 ? 24'h501f_00 : 24'h501f_01;	// ISP YUV / ISP RGB
 58:     LUT_DATA    =   24'h440e_00;		
 59:     LUT_DATA    =   24'h5000_a7;	// Lenc on, raw gamma on, BPC on, WPC on, CIP on	
    	// AEC target 自动曝光控制		
