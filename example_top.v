@@ -1493,61 +1493,93 @@ module example_top
 		.focus_code(focus_code_pixel), .focus_mode(focus_mode),
 		.rgb_out(edge_fps_rgb)
 	);
-	// Recognize one near-frontal circular outline from the stable edge map.
-	// Search and annotation use separate frame banks and do not stall video.
-	wire circle_found;
-	wire [10:0] circle_x;
-	wire [9:0] circle_y, circle_radius;
-	wire [23:0] circle_annotated_rgb;
-	// Circle criteria (2026-10-22): every sector sampled at five radii, at
-	// least 13 of 16 sectors (was 15), at most 12 hits on the validation
-	// rings at r +/- 7 cells (was 6 at +/- 5). Ellipses up to about 1.2:1
-	// pass, 1.3:1 and rounded rectangles do not (cell-level model). A
-	// rectangle search runs on the same occupancy grid.
-	wire rect_found;
-	wire [10:0] rect_x0, rect_x1;
-	wire [9:0] rect_y0, rect_y1;
-	wire [23:0] rect_annotated_rgb;
-	circle_geometry_detector #(.MIN_SCORE(9), .FINAL_SCORE(13), .MAX_SIDE_HITS(12),
-		.RING(7))
-		u_circle_geometry_detector (
-		.clk(clk_pixel), .rst_n(rstn_pixel), .vsync_n(lcd_vs), .de(lcd_de),
-		.edge_pixel(stable_edge != 8'd0), .edge_direction(stable_direction),
-		.found(circle_found), .center_x(circle_x), .center_y(circle_y),
-		.radius_px(circle_radius),
-		.rect_found(rect_found), .rect_x0(rect_x0), .rect_x1(rect_x1),
-		.rect_y0(rect_y0), .rect_y1(rect_y1)
-	);
-	// Rectangle label and outline first, then the circle label on top.
-	wire [10:0] rect_cx = (rect_x0 + rect_x1) >> 1;
-	wire [9:0] rect_cy = (rect_y0 + rect_y1) >> 1;
-	wire [10:0] rect_half_w = (rect_x1 - rect_x0) >> 1;
-	circle_label_osd #(.SHAPE(1'b1), .DRAW_BOX(1'b1)) u_rect_label_osd (
-		.clk(clk_pixel), .rst_n(rstn_pixel), .vsync_n(lcd_vs), .de(lcd_de),
-		.rgb_in(FPS_OSD_ENABLE ? edge_fps_rgb : edge_rgb),
-		.found(rect_found && recognition_on), .center_x(rect_cx), .center_y(rect_cy),
-		.radius_px(rect_half_w[9:0]),
-		.box_x0(rect_x0), .box_x1(rect_x1), .box_y0(rect_y0), .box_y1(rect_y1),
-		.rgb_out(rect_annotated_rgb)
-	);
-	circle_label_osd u_circle_label_osd (
-		.clk(clk_pixel), .rst_n(rstn_pixel), .vsync_n(lcd_vs), .de(lcd_de),
-		.rgb_in(rect_annotated_rgb),
-		.found(circle_found && recognition_on), .center_x(circle_x), .center_y(circle_y),
-		.radius_px(circle_radius),
-		.box_x0(11'd0), .box_x1(11'd0), .box_y0(10'd0), .box_y1(10'd0),
-		.rgb_out(circle_annotated_rgb)
-	);
+	// Shape recognition, shown while recognition_on (K1+K2 long hold).
+	// 1: connected components + moment invariants (shape_detector): every
+	//    dark object on a light background is classified as circle,
+	//    ellipse, square, rectangle or triangle at any rotation; up to 32
+	//    objects, outlined in their class colour and named when <= 8.
+	// 0: the earlier edge-grid search for one circle and one axis-aligned
+	//    rectangle (circle_geometry_detector).
+	localparam SHAPE_DETECTOR = 1'b1;
+	wire [23:0] shape_rgb;
+	wire shape_vs, shape_hs, shape_de;
+	generate if (SHAPE_DETECTOR) begin: ccl_shapes
+		wire [5:0] shape_count;
+		wire [32*41-1:0] shape_objects;
+		shape_detector u_shape_detector (
+			.clk(clk_pixel), .rst_n(rstn_pixel), .vsync_n(filtered_vs),
+			.de(filtered_valid), .gray(filtered_pixel),
+			.obj_count(shape_count), .obj_data(shape_objects), .threshold()
+		);
+		// Three-clock overlay; the sync signals are delayed with it.
+		shape_overlay u_shape_overlay (
+			.clk(clk_pixel), .rst_n(rstn_pixel), .enable(recognition_on),
+			.vs_in(lcd_vs), .hs_in(lcd_hs), .de_in(lcd_de),
+			.rgb_in(FPS_OSD_ENABLE ? edge_fps_rgb : edge_rgb),
+			.obj_count(shape_count), .obj_data(shape_objects),
+			.vs_out(shape_vs), .hs_out(shape_hs), .de_out(shape_de), .rgb_out(shape_rgb)
+		);
+	end else begin: geometry_shapes
+		// Recognize one near-frontal circular outline from the stable edge map.
+		// Search and annotation use separate frame banks and do not stall video.
+		wire circle_found;
+		wire [10:0] circle_x;
+		wire [9:0] circle_y, circle_radius;
+		wire [23:0] circle_annotated_rgb;
+		// Circle criteria (2026-10-22): every sector sampled at five radii, at
+		// least 13 of 16 sectors (was 15), at most 12 hits on the validation
+		// rings at r +/- 7 cells (was 6 at +/- 5). Ellipses up to about 1.2:1
+		// pass, 1.3:1 and rounded rectangles do not (cell-level model). A
+		// rectangle search runs on the same occupancy grid.
+		wire rect_found;
+		wire [10:0] rect_x0, rect_x1;
+		wire [9:0] rect_y0, rect_y1;
+		wire [23:0] rect_annotated_rgb;
+		circle_geometry_detector #(.MIN_SCORE(9), .FINAL_SCORE(13), .MAX_SIDE_HITS(12),
+			.RING(7))
+			u_circle_geometry_detector (
+			.clk(clk_pixel), .rst_n(rstn_pixel), .vsync_n(lcd_vs), .de(lcd_de),
+			.edge_pixel(stable_edge != 8'd0), .edge_direction(stable_direction),
+			.found(circle_found), .center_x(circle_x), .center_y(circle_y),
+			.radius_px(circle_radius),
+			.rect_found(rect_found), .rect_x0(rect_x0), .rect_x1(rect_x1),
+			.rect_y0(rect_y0), .rect_y1(rect_y1)
+		);
+		// Rectangle label and outline first, then the circle label on top.
+		wire [10:0] rect_cx = (rect_x0 + rect_x1) >> 1;
+		wire [9:0] rect_cy = (rect_y0 + rect_y1) >> 1;
+		wire [10:0] rect_half_w = (rect_x1 - rect_x0) >> 1;
+		circle_label_osd #(.SHAPE(1'b1), .DRAW_BOX(1'b1)) u_rect_label_osd (
+			.clk(clk_pixel), .rst_n(rstn_pixel), .vsync_n(lcd_vs), .de(lcd_de),
+			.rgb_in(FPS_OSD_ENABLE ? edge_fps_rgb : edge_rgb),
+			.found(rect_found && recognition_on), .center_x(rect_cx), .center_y(rect_cy),
+			.radius_px(rect_half_w[9:0]),
+			.box_x0(rect_x0), .box_x1(rect_x1), .box_y0(rect_y0), .box_y1(rect_y1),
+			.rgb_out(rect_annotated_rgb)
+		);
+		circle_label_osd u_circle_label_osd (
+			.clk(clk_pixel), .rst_n(rstn_pixel), .vsync_n(lcd_vs), .de(lcd_de),
+			.rgb_in(rect_annotated_rgb),
+			.found(circle_found && recognition_on), .center_x(circle_x), .center_y(circle_y),
+			.radius_px(circle_radius),
+			.box_x0(11'd0), .box_x1(11'd0), .box_y0(10'd0), .box_y1(10'd0),
+			.rgb_out(circle_annotated_rgb)
+		);
+		assign shape_rgb = circle_annotated_rgb;
+		assign shape_vs = lcd_vs;
+		assign shape_hs = lcd_hs;
+		assign shape_de = lcd_de;
+	end endgenerate
 	wire use_edge_timing = 1'b0;
-	wire hdmi_vs = lcd_vs;
-	wire hdmi_hs = lcd_hs;
-	wire hdmi_de = lcd_de;
+	wire hdmi_vs = shape_vs;
+	wire hdmi_hs = shape_hs;
+	wire hdmi_de = shape_de;
 	wire [23:0] dvp_status_rgb = dvp_status_pixel[0] ? 24'hff0000 :
 		dvp_status_pixel[1] ? 24'h0000ff : dvp_status_pixel[2] ? 24'h00ff00 : 24'hffff00;
 	wire [23:0] hdmi_rgb = VIDEO_TEST_PATTERN ? test_pattern_rgb :
 		DDR_VIDEO_DIAGNOSTIC ? diagnostic_display_rgb :
 		(DVP_MONITOR_OVERLAY && diagnostic_lcd_x < 64 && diagnostic_lcd_y < 12) ? dvp_status_rgb :
-		EDGE_ENABLE ? circle_annotated_rgb : {lcd_red, lcd_green, lcd_blue};
+		EDGE_ENABLE ? shape_rgb : {lcd_red, lcd_green, lcd_blue};
 	video_test_pattern u_video_test_pattern (
 		.clk   (clk_pixel),
 		.rst_n (rstn_pixel),

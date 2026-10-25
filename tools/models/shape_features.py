@@ -93,27 +93,32 @@ def triangle(cx, cy, r, rot=0.0):
     return poly_inside(rot_pts(pts, cx, cy, rot))
 
 
-cases = []
-for r in (25, 45, 65):
-    cases.append(('circle r%d' % r, ellipse(320, 180, r, r)))
-for q in (1.1, 1.2, 1.3, 1.5, 2.0):
-    cases.append(('ellipse %.1f rot30' % q, ellipse(320, 180, 55 * q, 55, math.radians(30))))
-for a in (0, 11, 22, 33, 45):
-    cases.append(('square 90 rot%d' % a, rect(320, 180, 90, 90, math.radians(a))))
-for a in (0, 15, 30):
-    cases.append(('rect 120x80 rot%d' % a, rect(320, 180, 120, 80, math.radians(a))))
-    cases.append(('rect 140x50 rot%d' % a, rect(320, 180, 140, 50, math.radians(a))))
-cases.append(('square 50 rot20', rect(320, 180, 50, 50, math.radians(20))))
-for a in (0, 20, 45):
-    cases.append(('triangle r60 rot%d' % a, triangle(320, 180, 60, math.radians(a))))
-cases.append(('rounded 100x70 r20', rounded(320, 180, 100, 70, 20)))
-cases.append(('rounded 100x70 r20 rot25', rounded(320, 180, 100, 70, 20, math.radians(25))))
-cases.append(('rounded sq 90 r20', rounded(320, 180, 90, 90, 20)))
-cases.append(('rounded sq 90 r30', rounded(320, 180, 90, 90, 30)))
+def _main():
+    cases = []
+    for r in (25, 45, 65):
+        cases.append(('circle r%d' % r, ellipse(320, 180, r, r)))
+    for q in (1.1, 1.2, 1.3, 1.5, 2.0):
+        cases.append(('ellipse %.1f rot30' % q, ellipse(320, 180, 55 * q, 55, math.radians(30))))
+    for a in (0, 11, 22, 33, 45):
+        cases.append(('square 90 rot%d' % a, rect(320, 180, 90, 90, math.radians(a))))
+    for a in (0, 15, 30):
+        cases.append(('rect 120x80 rot%d' % a, rect(320, 180, 120, 80, math.radians(a))))
+        cases.append(('rect 140x50 rot%d' % a, rect(320, 180, 140, 50, math.radians(a))))
+    cases.append(('square 50 rot20', rect(320, 180, 50, 50, math.radians(20))))
+    for a in (0, 20, 45):
+        cases.append(('triangle r60 rot%d' % a, triangle(320, 180, 60, math.radians(a))))
+    cases.append(('rounded 100x70 r20', rounded(320, 180, 100, 70, 20)))
+    cases.append(('rounded 100x70 r20 rot25', rounded(320, 180, 100, 70, 20, math.radians(25))))
+    cases.append(('rounded sq 90 r20', rounded(320, 180, 90, 90, 20)))
+    cases.append(('rounded sq 90 r30', rounded(320, 180, 90, 90, 30)))
 
-print('%-26s %6s %7s %6s %6s' % ('shape', 'A', 'J', 'ASP', 'F2'))
-for name, f in cases:
-    img = render(f)
-    mask = img < 120
-    A, J, asp, F2 = features(mask)
-    print('%-26s %6d %7.4f %6.2f %6.2f' % (name, A, J, asp, F2))
+    print('%-26s %6s %7s %6s %6s' % ('shape', 'A', 'J', 'ASP', 'F2'))
+    for name, f in cases:
+        img = render(f)
+        mask = img < 120
+        A, J, asp, F2 = features(mask)
+        print('%-26s %6d %7.4f %6.2f %6.2f' % (name, A, J, asp, F2))
+
+
+if __name__ == '__main__':
+    _main()
