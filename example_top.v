@@ -721,7 +721,13 @@ module example_top
 	// The sensor reference clock is 16 MHz, so the reference PLL settings
 	// give 20 fps (SCLK 28 MHz, PCLK 56 MHz). CAMERA_30FPS raises the PLL
 	// multiplier for 30 fps (PCLK 84 MHz). The display path remains 720p60.
-	localparam [7:0] CAMERA_SYS_DIV = 8'h21;
+	// 1: experimental 60 fps capture. The OV5640 sends Y8 (gray, one byte per
+	// pixel) and its system clock is doubled (0x3035 = 0x11), so the byte
+	// rate on DVP stays near the proven 84 MHz. Gray is stored as RGB565
+	// (R=G=B), so everything after the DDR is unchanged; the colour
+	// overlay mode shows gray. 0: 30 fps RGB565 colour (release build).
+	localparam CAMERA_60FPS_Y8 = 1'b1;
+	localparam [7:0] CAMERA_SYS_DIV = CAMERA_60FPS_Y8 ? 8'h11 : 8'h21;
 	localparam CAMERA_30FPS = 1'b1;
 	// With CAMERA_30FPS, 1 shortens the sensor line (HTS 1892 -> 1600 SCLK)
 	// for about 35.5 fps at the same 84 MHz PCLK. Experimental.
@@ -735,9 +741,10 @@ module example_top
 	I2C_OV5640_1280720_Config #(.SENSOR_TEST_PATTERN(SENSOR_TEST_PATTERN), .CAMERA_SYS_DIV(CAMERA_SYS_DIV), .BAND_50HZ_FIX(CAMERA_BAND_50HZ_FIX),
 		.PLL_MULT(CAMERA_30FPS ? 8'h9e : 8'h69),
 		// Rows in 10 ms and whole 10 ms bands within one frame (740 rows).
-		.B50_STEP(!CAMERA_30FPS ? 10'd148 : CAMERA_SHORT_LINE ? 10'd263 : 10'd222),
-		.B50_MAX_BANDS(!CAMERA_30FPS ? 8'd4 : CAMERA_SHORT_LINE ? 8'd2 : 8'd3),
-		.HTS(CAMERA_HTS), .ISP_LOW_NOISE(CAMERA_ISP_LOW_NOISE)) u_I2C_OV5640_1280720_Config
+		.B50_STEP(CAMERA_60FPS_Y8 ? 10'd444 : !CAMERA_30FPS ? 10'd148 : CAMERA_SHORT_LINE ? 10'd263 : 10'd222),
+		.B50_MAX_BANDS(CAMERA_60FPS_Y8 ? 8'd1 : !CAMERA_30FPS ? 8'd4 : CAMERA_SHORT_LINE ? 8'd2 : 8'd3),
+		.HTS(CAMERA_HTS), .ISP_LOW_NOISE(CAMERA_ISP_LOW_NOISE),
+		.FORMAT_Y8(CAMERA_60FPS_Y8)) u_I2C_OV5640_1280720_Config
 	(
 	    .LUT_INDEX  (ov5640_i2c_config_index   ),
 	    .FOCUS_CODE (focus_applied             ),
@@ -908,10 +915,10 @@ module example_top
 
 	Sensor_Image_XYCrop
 	#(
-		//	RGB width doubled. 
-		.IMAGE_HSIZE_SOURCE (1280 * 2 / CSI_STRB_WIDTH),
+		//	RGB565: two bytes per pixel; Y8: one.
+		.IMAGE_HSIZE_SOURCE (1280 * (CAMERA_60FPS_Y8 ? 1 : 2) / CSI_STRB_WIDTH),
 		.IMAGE_VSIZE_SOURCE (720	 ),
-		.IMAGE_HSIZE_TARGET (1280 * 2 / CSI_STRB_WIDTH),
+		.IMAGE_HSIZE_TARGET (1280 * (CAMERA_60FPS_Y8 ? 1 : 2) / CSI_STRB_WIDTH),
 		.IMAGE_YSIZE_TARGET (720 	 ),
 		.PIXEL_DATA_WIDTH	(CSI_DATA_WIDTH) 		//	32		 )
 	)
@@ -1021,7 +1028,10 @@ module example_top
 	wire fragment_key_on = 1'b1;
 	wire [1:0] tnr_mode = TNR_ENABLE ? 2'd1 : 2'd0;
 	//	Write in 8 bits. Read in 16 bits. 
-	axi4_ctrl #(.C_RD_END_ADDR(1280 * 2 * 720), .C_W_WIDTH(CSI_DATA_WIDTH), .C_R_WIDTH(16), .C_ID_LEN(4),
+	// Y8: each byte is one gray pixel, written as RGB565 with R = G = B.
+	wire [7:0] y8_byte = cmos_frame_Gray[7:0];
+	wire [15:0] y8_rgb565 = {y8_byte[7:3], y8_byte[7:2], y8_byte[7:3]};
+	axi4_ctrl #(.C_RD_END_ADDR(1280 * 2 * 720), .C_W_WIDTH(CAMERA_60FPS_Y8 ? 16 : CSI_DATA_WIDTH), .C_R_WIDTH(16), .C_ID_LEN(4),
 		.C_TNR(TNR_ENABLE)) u_axi4_ctrl (
 
 		.axi_clk        (w_ddr3_ui_clk            ),
@@ -1058,7 +1068,7 @@ module example_top
 		.wframe_pclk    (w_cmos_pclk          ),
 		.wframe_vsync   (write_frame_vsync), //w_wframe_vsync   ),		//	Writter VSync. Flush on rising edge. Connect to EOF. 
 		.wframe_data_en (cmos_frame_href && !freeze_active),
-		.wframe_data    (cmos_frame_Gray),
+		.wframe_data    (CAMERA_60FPS_Y8 ? {48'd0, y8_rgb565} : cmos_frame_Gray),
 		
 		.rframe_pclk    (clk_pixel            ),
 		.rframe_vsync   (~lcd_vs             ),		//	Reader VSync. Flush on rising edge. Connect to ~EOF. 
