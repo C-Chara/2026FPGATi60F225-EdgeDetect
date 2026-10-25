@@ -17,3 +17,4 @@ sim/work/
 *.vcd
 *.fst
 *.wlf
+sim/out/
