@@ -13,7 +13,10 @@
 //   3. match: two row runs (top, bottom) at least RECT_MIN_H rows apart whose
 //      left and right ends agree within RECT_TOL cells, and at both ends a
 //      column run that covers the rows between them. The largest such
-//      rectangle wins. A circle fails step 3 (no vertical sides at the ends
+//      rectangle wins, except that a candidate within 3 cells of the
+//      rectangle shown now is preferred (a checkerboard holds many valid
+//      rectangles; without this the label jumps between them). A circle
+//      fails step 3 (no vertical sides at the ends
 //      of its top and bottom arcs), a strongly rounded rectangle too.
 module circle_geometry_detector #(
     parameter integer H_ACTIVE = 1280,
@@ -244,6 +247,11 @@ module circle_geometry_detector #(
     reg [9:0] rect_best_per;
     reg [8:0] rect_bx0, rect_bx1;
     reg [7:0] rect_by0, rect_by1;
+    // Largest candidate close to the tracked rectangle.
+    reg tc_any;
+    reg [9:0] tc_per;
+    reg [8:0] tc_x0, tc_x1;
+    reg [7:0] tc_y0, tc_y1;
     wire [7:0] row_raddr = (state == ST_RMATCH_A) ? ma : mb;
     wire signed [10:0] col_pick = (ck < RECT_COLS) ?
         $signed({2'd0, a_x0}) + $signed({6'd0, ck}) - RECT_TOL :
@@ -294,10 +302,20 @@ module circle_geometry_detector #(
     reg [8:0] rect_tx0, rect_tx1;
     reg [7:0] rect_ty0, rect_ty1;
     reg [1:0] rect_confirm, rect_miss;
-    wire rect_close = (rect_bx0 > rect_tx0 ? rect_bx0-rect_tx0 : rect_tx0-rect_bx0) <= 9'd3 &&
-                      (rect_bx1 > rect_tx1 ? rect_bx1-rect_tx1 : rect_tx1-rect_bx1) <= 9'd3 &&
-                      (rect_by0 > rect_ty0 ? rect_by0-rect_ty0 : rect_ty0-rect_by0) <= 8'd3 &&
-                      (rect_by1 > rect_ty1 ? rect_by1-rect_ty1 : rect_ty1-rect_by1) <= 8'd3;
+    wire sel_any = tc_any || rect_any;
+    wire [8:0] sel_x0 = tc_any ? tc_x0 : rect_bx0;
+    wire [8:0] sel_x1 = tc_any ? tc_x1 : rect_bx1;
+    wire [7:0] sel_y0 = tc_any ? tc_y0 : rect_by0;
+    wire [7:0] sel_y1 = tc_any ? tc_y1 : rect_by1;
+    wire rect_close = (sel_x0 > rect_tx0 ? sel_x0-rect_tx0 : rect_tx0-sel_x0) <= 9'd3 &&
+                      (sel_x1 > rect_tx1 ? sel_x1-rect_tx1 : rect_tx1-sel_x1) <= 9'd3 &&
+                      (sel_y0 > rect_ty0 ? sel_y0-rect_ty0 : rect_ty0-sel_y0) <= 8'd3 &&
+                      (sel_y1 > rect_ty1 ? sel_y1-rect_ty1 : rect_ty1-sel_y1) <= 8'd3;
+    wire cand_close = rect_track_valid &&
+        (a_x0 > rect_tx0 ? a_x0-rect_tx0 : rect_tx0-a_x0) <= 9'd3 &&
+        (a_x1 > rect_tx1 ? a_x1-rect_tx1 : rect_tx1-a_x1) <= 9'd3 &&
+        (ma > rect_ty0 ? ma-rect_ty0 : rect_ty0-ma) <= 8'd3 &&
+        (cand_yb > rect_ty1 ? cand_yb-rect_ty1 : rect_ty1-cand_yb) <= 8'd3;
 
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
@@ -323,6 +341,7 @@ module circle_geometry_detector #(
             a_x0<=0; a_x1<=0; ck<=0; ck_d<=0; ck_v_d<=0; hit_l<=0; hit_r<=0;
             rect_any<=0; rect_best_per<=0;
             rect_bx0<=0; rect_bx1<=0; rect_by0<=0; rect_by1<=0;
+            tc_any<=0; tc_per<=0; tc_x0<=0; tc_x1<=0; tc_y0<=0; tc_y1<=0;
             rect_track_valid<=0; rect_tx0<=0; rect_tx1<=0; rect_ty0<=0; rect_ty1<=0;
             rect_confirm<=0; rect_miss<=0;
             rect_found<=0; rect_x0<=0; rect_x1<=0; rect_y0<=0; rect_y1<=0;
@@ -406,7 +425,7 @@ module circle_geometry_detector #(
                             end
                         end
                         if (result_ready) begin
-                            if (rect_any) begin
+                            if (sel_any) begin
                                 if (rect_track_valid && rect_close) begin
                                     if (rect_confirm != 2'd3) rect_confirm<=rect_confirm+2'd1;
                                     if (rect_confirm >= 2'd1) rect_found<=1;
@@ -415,12 +434,12 @@ module circle_geometry_detector #(
                                     rect_found<=0;
                                 end
                                 rect_track_valid<=1;
-                                rect_tx0<=rect_bx0; rect_tx1<=rect_bx1;
-                                rect_ty0<=rect_by0; rect_ty1<=rect_by1;
-                                rect_x0<={rect_bx0,2'b00};
-                                rect_x1<={rect_bx1,2'b11};
-                                rect_y0<={rect_by0,2'b00};
-                                rect_y1<={rect_by1,2'b11};
+                                rect_tx0<=sel_x0; rect_tx1<=sel_x1;
+                                rect_ty0<=sel_y0; rect_ty1<=sel_y1;
+                                rect_x0<={sel_x0,2'b00};
+                                rect_x1<={sel_x1,2'b11};
+                                rect_y0<={sel_y0,2'b00};
+                                rect_y1<={sel_y1,2'b11};
                                 rect_miss<=0;
                             end else if (rect_found && rect_miss < 2'd2)
                                 rect_miss<=rect_miss+2'd1;
@@ -428,7 +447,7 @@ module circle_geometry_detector #(
                                 rect_found<=0; rect_track_valid<=0; rect_confirm<=0;
                             end
                         end
-                        rect_any<=0; rect_best_per<=0;
+                        rect_any<=0; rect_best_per<=0; tc_any<=0; tc_per<=0;
                         scan_addr<=0; scan_i<=0; scan_o<=0; scan_go<=1;
                         capture_bank<=~capture_bank;
                         search_bank<=capture_bank;
@@ -570,6 +589,12 @@ module circle_geometry_detector #(
                     end
                 end
                 ST_RCHECK_DONE: begin
+                    if (hit_l && hit_r && cand_close && (!tc_any || cand_perimeter > tc_per)) begin
+                        tc_any <= 1;
+                        tc_per <= cand_perimeter;
+                        tc_x0 <= a_x0; tc_x1 <= a_x1;
+                        tc_y0 <= ma; tc_y1 <= cand_yb;
+                    end
                     if (hit_l && hit_r && (!rect_any || cand_perimeter > rect_best_per)) begin
                         rect_any <= 1;
                         rect_best_per <= cand_perimeter;
