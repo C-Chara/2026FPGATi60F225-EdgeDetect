@@ -734,7 +734,7 @@ module example_top
 	// Bayer order of the first pixel: 0 RGGB, 1 GRBG, 2 GBRG, 3 BGGR.
 	// PHASE_FROM_KEYS: K1+K2 short steps it at run time (test build).
 	localparam [1:0] BAYER_PHASE = 2'd3;
-	localparam BAYER_PHASE_FROM_KEYS = 1'b1;
+	localparam BAYER_PHASE_FROM_KEYS = 1'b0;
 	localparam CAMERA_60FPS = CAMERA_60FPS_Y8 || CAMERA_60FPS_RAW;
 	localparam [7:0] CAMERA_SYS_DIV = CAMERA_60FPS ? 8'h11 : 8'h21;
 	localparam CAMERA_30FPS = 1'b1;
@@ -1564,6 +1564,7 @@ module example_top
 			.clk(clk_pixel), .rst_n(rstn_pixel), .enable(recognition_on),
 			.vs_in(lcd_vs), .hs_in(lcd_hs), .de_in(lcd_de),
 			.rgb_in(FPS_OSD_ENABLE ? edge_fps_rgb : edge_rgb),
+			.edge_in(final_edge && aligned_rgb_valid),
 			.obj_count(shape_count), .obj_data(shape_objects),
 			.vs_out(shape_vs), .hs_out(shape_hs), .de_out(shape_de), .rgb_out(shape_rgb)
 		);
