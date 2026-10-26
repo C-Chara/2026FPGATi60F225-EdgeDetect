@@ -10,7 +10,11 @@
 // keeps its position.
 module shape_overlay #(
     parameter integer MAX_OBJECTS = 32,
-    parameter integer LABELS = 8
+    parameter integer LABELS = 8,
+    // Screen position of detector pixel (0, 0): the display delay of the
+    // colour image and edges relative to the detector's coordinates.
+    parameter integer X_OFF = 0,
+    parameter integer Y_OFF = 0
 )(
     input  wire        clk,
     input  wire        rst_n,
@@ -84,19 +88,19 @@ module shape_overlay #(
     always @(posedge clk) begin
         for (i = 0; i < MAX_OBJECTS; i = i + 1) begin
             bc  = obj_data[i*41+38 +: 3];
-            bx0 = {obj_data[i*41+28 +: 10], 1'b0};
-            bx1 = {obj_data[i*41+18 +: 10], 1'b1};
-            by0 = {obj_data[i*41+9 +: 9], 1'b0};
-            by1 = {obj_data[i*41 +: 9], 1'b1};
+            bx0 = {obj_data[i*41+28 +: 10], 1'b0} + X_OFF;
+            bx1 = {obj_data[i*41+18 +: 10], 1'b1} + X_OFF;
+            by0 = {obj_data[i*41+9 +: 9], 1'b0} + Y_OFF;
+            by1 = {obj_data[i*41 +: 9], 1'b1} + Y_OFF;
             // inside the box, 4 pixels of margin for the edge line
             hit1[i] <= enable && i < obj_count &&
                        x + 11'd4 >= bx0 && x <= bx1 + 11'd4 && y + 10'd4 >= by0 && y <= by1 + 10'd4;
         end
         for (i = 0; i < LABELS; i = i + 1) begin
             bc  = obj_data[i*41+38 +: 3];
-            lx  = {obj_data[i*41+28 +: 10], 1'b0};
-            by0 = {obj_data[i*41+9 +: 9], 1'b0};
-            by1 = {obj_data[i*41 +: 9], 1'b1};
+            lx  = {obj_data[i*41+28 +: 10], 1'b0} + X_OFF;
+            by0 = {obj_data[i*41+9 +: 9], 1'b0} + Y_OFF;
+            by1 = {obj_data[i*41 +: 9], 1'b1} + Y_OFF;
             ly  = (by0 >= 10'd26) ? by0 - 10'd26 : by1 + 10'd4;
             lw  = (cls_len(bc) == 2'd2) ? 11'd64 : 11'd44;
             lab1[i] <= enable && show_labels && i < obj_count &&
@@ -131,9 +135,9 @@ module shape_overlay #(
             if (lab1[i]) begin
                 found = 1'b1;
                 fc = obj_data[i*41+38 +: 3];
-                flx = {obj_data[i*41+28 +: 10], 1'b0};
-                fby0 = {obj_data[i*41+9 +: 9], 1'b0};
-                fby1 = {obj_data[i*41 +: 9], 1'b1};
+                flx = {obj_data[i*41+28 +: 10], 1'b0} + X_OFF;
+                fby0 = {obj_data[i*41+9 +: 9], 1'b0} + Y_OFF;
+                fby1 = {obj_data[i*41 +: 9], 1'b1} + Y_OFF;
                 fly = (fby0 >= 10'd26) ? fby0 - 10'd26 : fby1 + 10'd4;
             end
         txt2 <= found;

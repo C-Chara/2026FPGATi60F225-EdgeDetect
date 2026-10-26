@@ -1560,7 +1560,7 @@ module example_top
 			.obj_count(shape_count), .obj_data(shape_objects), .threshold()
 		);
 		// Three-clock overlay; the sync signals are delayed with it.
-		shape_overlay u_shape_overlay (
+		shape_overlay #(.X_OFF(ALIGN_PIXEL_DELAY), .Y_OFF(ALIGN_ROW_DELAY - 1)) u_shape_overlay (
 			.clk(clk_pixel), .rst_n(rstn_pixel), .enable(recognition_on),
 			.vs_in(lcd_vs), .hs_in(lcd_hs), .de_in(lcd_de),
 			.rgb_in(FPS_OSD_ENABLE ? edge_fps_rgb : edge_rgb),
