@@ -1,8 +1,9 @@
 `timescale 1ns/1ps
 
-// Draws the shape_detector results on the video: a 2-pixel outline around
-// every object in its class colour, and (when there are at most LABELS
-// objects) the class name above the box:
+// Draws the shape_detector results on the video: the object's own contour
+// (the edge pixels inside its box, widened to 2 pixels) in its class
+// colour, and (when there are at most LABELS objects) the class name above
+// the box:
 //   circle 圆形 yellow, ellipse 椭圆 orange, square 正方形 cyan,
 //   rectangle 矩形 green, triangle 三角形 magenta.
 // Three-clock pipeline; de/hs/vs are delayed with the colour so the picture
@@ -16,6 +17,7 @@ module shape_overlay #(
     input  wire        enable,
     input  wire        vs_in, hs_in, de_in,      // vs active low (lcd_vs)
     input  wire [23:0] rgb_in,
+    input  wire        edge_in,                  // edge pixel, same clock as rgb_in
     input  wire [5:0]  obj_count,
     input  wire [MAX_OBJECTS*41-1:0] obj_data,
     output reg         vs_out, hs_out, de_out,
@@ -72,6 +74,7 @@ module shape_overlay #(
     reg [10:0] x1r;
     reg [9:0]  y1r;
     reg        v1, h1, d1;
+    reg        edge_prev, edge1, edge2;
     reg [23:0] rgb1;
     wire       show_labels = obj_count <= LABELS;
     integer i;
@@ -85,9 +88,9 @@ module shape_overlay #(
             bx1 = {obj_data[i*41+18 +: 10], 1'b1};
             by0 = {obj_data[i*41+9 +: 9], 1'b0};
             by1 = {obj_data[i*41 +: 9], 1'b1};
+            // inside the box, 4 pixels of margin for the edge line
             hit1[i] <= enable && i < obj_count &&
-                       x + 11'd2 >= bx0 && x <= bx1 + 11'd2 && y + 10'd2 >= by0 && y <= by1 + 10'd2 &&
-                       !(x >= bx0 + 11'd1 && x + 11'd1 <= bx1 && y >= by0 + 10'd1 && y + 10'd1 <= by1);
+                       x + 11'd4 >= bx0 && x <= bx1 + 11'd4 && y + 10'd4 >= by0 && y <= by1 + 10'd4;
         end
         for (i = 0; i < LABELS; i = i + 1) begin
             bc  = obj_data[i*41+38 +: 3];
@@ -100,6 +103,8 @@ module shape_overlay #(
                        x >= lx && x < lx + lw && y >= ly && y < ly + 10'd22;
         end
         x1r <= x; y1r <= y;
+        edge_prev <= edge_in;
+        edge1 <= edge_in || edge_prev;
         v1 <= vs_in; h1 <= hs_in; d1 <= de_in;
         rgb1 <= rgb_in;
     end
@@ -136,6 +141,7 @@ module shape_overlay #(
         tx2 <= x1r - flx;
         ty2 <= y1r - fly;
         v2 <= v1; h2 <= h1; d2 <= d1;
+        edge2 <= edge1;
         rgb2 <= rgb1;
     end
 
@@ -154,7 +160,7 @@ module shape_overlay #(
         end else begin
             vs_out <= v2; hs_out <= h2; de_out <= d2;
             rgb_out <= txt2 ? (ink ? cls_rgb(tcls2) : 24'h101010) :
-                       out2 ? cls_rgb(ocls2) : rgb2;
+                       (out2 && edge2) ? cls_rgb(ocls2) : rgb2;
         end
     end
 endmodule
