@@ -15,7 +15,9 @@
 module fps_osd #(
     parameter integer PIXEL_HZ = 74400000,
     // 0 hides the FOC line and moves the lines below it up.
-    parameter SHOW_FOCUS = 1'b1
+    parameter SHOW_FOCUS = 1'b1,
+    // 1: the MED line shows 'PHS n' (Bayer phase, colour test build).
+    parameter SHOW_PHASE = 1'b0
 )(
     input wire clk, rst_n, vs, de,
     input wire [23:0] rgb_in,
@@ -30,6 +32,7 @@ module fps_osd #(
     input wire focus_mode,
     input wire [1:0] tnr_mode,
     input wire recognition_on,
+    input wire [1:0] bayer_phase,
     input wire [6:0] change_pct,
     input wire change_valid,
     input wire [11:0] flicker,
@@ -182,7 +185,7 @@ module fps_osd #(
     wire [4:0] row = (SHOW_FOCUS || screen_row < 5'd4) ? screen_row : screen_row + 5'd1;
     wire [4:0] row_y = rel_row_y % 26;
     wire [3:0] row_letters = (row == 5'd3 || row == 5'd4) ? 4'd8 :
-                             (row == 5'd5) ? (median_on ? 4'd6 : 4'd7) :
+                             (row == 5'd5) ? ((SHOW_PHASE || median_on) ? 4'd6 : 4'd7) :
                              (row == 5'd6) ? (tnr_mode == 2'd1 || tnr_mode == 2'd2 ? 4'd6 : 4'd7) :
                              (row == 5'd7) ? (recognition_on ? 4'd6 : 4'd7) :
                              (row == 5'd9 || row == 5'd10) ? 4'd8 : 4'd6;
@@ -231,7 +234,11 @@ module fps_osd #(
                 7:symbol={1'b0,focus_bcd[3:0]};
                 default:symbol=G_BLANK;
             endcase
-            5'd5: case(letter)
+            5'd5: if (SHOW_PHASE) case(letter)
+                0:symbol=G_P; 1:symbol=G_H; 2:symbol=G_S;
+                4:symbol={3'd0, bayer_phase};
+                default:symbol=G_BLANK;
+            endcase else case(letter)
                 0:symbol=G_M; 1:symbol=G_E; 2:symbol=G_D;
                 4:symbol=G_O;
                 5:symbol=median_on ? G_N : G_F;
