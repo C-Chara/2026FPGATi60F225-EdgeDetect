@@ -726,8 +726,17 @@ module example_top
 	// rate on DVP stays near the proven 84 MHz. Gray is stored as RGB565
 	// (R=G=B), so everything after the DDR is unchanged; the colour
 	// overlay mode shows gray. 0: 30 fps RGB565 colour (release build).
-	localparam CAMERA_60FPS_Y8 = 1'b1;
-	localparam [7:0] CAMERA_SYS_DIV = CAMERA_60FPS_Y8 ? 8'h11 : 8'h21;
+	localparam CAMERA_60FPS_Y8 = 1'b0;
+	// 1: 60 fps colour. The OV5640 sends RAW8 Bayer (one byte per pixel,
+	// same DVP rate as Y8); raw_demosaic rebuilds RGB (2x2 demosaic,
+	// grey-world white balance, gamma) before the DDR.
+	localparam CAMERA_60FPS_RAW = 1'b1;
+	// Bayer order of the first pixel: 0 RGGB, 1 GRBG, 2 GBRG, 3 BGGR.
+	// PHASE_FROM_KEYS: K1+K2 short steps it at run time (test build).
+	localparam [1:0] BAYER_PHASE = 2'd3;
+	localparam BAYER_PHASE_FROM_KEYS = 1'b1;
+	localparam CAMERA_60FPS = CAMERA_60FPS_Y8 || CAMERA_60FPS_RAW;
+	localparam [7:0] CAMERA_SYS_DIV = CAMERA_60FPS ? 8'h11 : 8'h21;
 	localparam CAMERA_30FPS = 1'b1;
 	// With CAMERA_30FPS, 1 shortens the sensor line (HTS 1892 -> 1600 SCLK)
 	// for about 35.5 fps at the same 84 MHz PCLK. Experimental.
@@ -741,10 +750,10 @@ module example_top
 	I2C_OV5640_1280720_Config #(.SENSOR_TEST_PATTERN(SENSOR_TEST_PATTERN), .CAMERA_SYS_DIV(CAMERA_SYS_DIV), .BAND_50HZ_FIX(CAMERA_BAND_50HZ_FIX),
 		.PLL_MULT(CAMERA_30FPS ? 8'h9e : 8'h69),
 		// Rows in 10 ms and whole 10 ms bands within one frame (740 rows).
-		.B50_STEP(CAMERA_60FPS_Y8 ? 10'd444 : !CAMERA_30FPS ? 10'd148 : CAMERA_SHORT_LINE ? 10'd263 : 10'd222),
-		.B50_MAX_BANDS(CAMERA_60FPS_Y8 ? 8'd1 : !CAMERA_30FPS ? 8'd4 : CAMERA_SHORT_LINE ? 8'd2 : 8'd3),
+		.B50_STEP(CAMERA_60FPS ? 10'd444 : !CAMERA_30FPS ? 10'd148 : CAMERA_SHORT_LINE ? 10'd263 : 10'd222),
+		.B50_MAX_BANDS(CAMERA_60FPS ? 8'd1 : !CAMERA_30FPS ? 8'd4 : CAMERA_SHORT_LINE ? 8'd2 : 8'd3),
 		.HTS(CAMERA_HTS), .ISP_LOW_NOISE(CAMERA_ISP_LOW_NOISE),
-		.FORMAT_Y8(CAMERA_60FPS_Y8)) u_I2C_OV5640_1280720_Config
+		.FORMAT_Y8(CAMERA_60FPS_Y8), .FORMAT_RAW(CAMERA_60FPS_RAW)) u_I2C_OV5640_1280720_Config
 	(
 	    .LUT_INDEX  (ov5640_i2c_config_index   ),
 	    .FOCUS_CODE (focus_applied             ),
@@ -916,9 +925,9 @@ module example_top
 	Sensor_Image_XYCrop
 	#(
 		//	RGB565: two bytes per pixel; Y8: one.
-		.IMAGE_HSIZE_SOURCE (1280 * (CAMERA_60FPS_Y8 ? 1 : 2) / CSI_STRB_WIDTH),
+		.IMAGE_HSIZE_SOURCE (1280 * (CAMERA_60FPS ? 1 : 2) / CSI_STRB_WIDTH),
 		.IMAGE_VSIZE_SOURCE (720	 ),
-		.IMAGE_HSIZE_TARGET (1280 * (CAMERA_60FPS_Y8 ? 1 : 2) / CSI_STRB_WIDTH),
+		.IMAGE_HSIZE_TARGET (1280 * (CAMERA_60FPS ? 1 : 2) / CSI_STRB_WIDTH),
 		.IMAGE_YSIZE_TARGET (720 	 ),
 		.PIXEL_DATA_WIDTH	(CSI_DATA_WIDTH) 		//	32		 )
 	)
@@ -1031,7 +1040,23 @@ module example_top
 	// Y8: each byte is one gray pixel, written as RGB565 with R = G = B.
 	wire [7:0] y8_byte = cmos_frame_Gray[7:0];
 	wire [15:0] y8_rgb565 = {y8_byte[7:3], y8_byte[7:2], y8_byte[7:3]};
-	axi4_ctrl #(.C_RD_END_ADDR(1280 * 2 * 720), .C_W_WIDTH(CAMERA_60FPS_Y8 ? 16 : CSI_DATA_WIDTH), .C_R_WIDTH(16), .C_ID_LEN(4),
+	// RAW8: Bayer -> RGB565 in the camera clock domain.
+	wire [1:0] bayer_phase_key;
+	(* async_reg = "true" *) reg [1:0] bayer_phase_meta = 0, bayer_phase_sync = 0;
+	always @(posedge w_cmos_pclk) begin
+		bayer_phase_meta <= BAYER_PHASE_FROM_KEYS ? bayer_phase_key : BAYER_PHASE;
+		bayer_phase_sync <= bayer_phase_meta;
+	end
+	wire raw_de;
+	wire [15:0] raw_rgb565;
+	raw_demosaic #(.H_ACTIVE(1280)) u_raw_demosaic (
+		.clk(w_cmos_pclk), .rst_n(rstn_sys), .frame_valid(cmos_frame_vsync),
+		.de(cmos_frame_href), .raw(cmos_frame_Gray[7:0]), .phase(bayer_phase_sync),
+		.gamma_on(1'b1), .de_out(raw_de), .rgb565(raw_rgb565), .gain_r(), .gain_b()
+	);
+	wire cam_pixel_en = CAMERA_60FPS_RAW ? raw_de : cmos_frame_href;
+	wire [15:0] cam_pixel16 = CAMERA_60FPS_RAW ? raw_rgb565 : y8_rgb565;
+	axi4_ctrl #(.C_RD_END_ADDR(1280 * 2 * 720), .C_W_WIDTH(CAMERA_60FPS ? 16 : CSI_DATA_WIDTH), .C_R_WIDTH(16), .C_ID_LEN(4),
 		.C_TNR(TNR_ENABLE)) u_axi4_ctrl (
 
 		.axi_clk        (w_ddr3_ui_clk            ),
@@ -1067,8 +1092,8 @@ module example_top
 
 		.wframe_pclk    (w_cmos_pclk          ),
 		.wframe_vsync   (write_frame_vsync), //w_wframe_vsync   ),		//	Writter VSync. Flush on rising edge. Connect to EOF. 
-		.wframe_data_en (cmos_frame_href && !freeze_active),
-		.wframe_data    (CAMERA_60FPS_Y8 ? {48'd0, y8_rgb565} : cmos_frame_Gray),
+		.wframe_data_en (cam_pixel_en && !freeze_active),
+		.wframe_data    (CAMERA_60FPS ? {48'd0, cam_pixel16} : cmos_frame_Gray),
 		
 		.rframe_pclk    (clk_pixel            ),
 		.rframe_vsync   (~lcd_vs             ),		//	Reader VSync. Flush on rising edge. Connect to ~EOF. 
@@ -1144,6 +1169,18 @@ module example_top
 	wire [11:0] edge_threshold_active;
 	wire [2:0] edge_mode_active;
 	wire median_on, noise_on, focus_mode;
+	wire median_key_on, noise_key_on;
+	// Phase test build: every K1+K2 short press (it always changes the
+	// median demo state) steps the Bayer phase; median stays on, no noise.
+	reg [1:0] demo_d = 0;
+	reg [1:0] bayer_phase_cnt = BAYER_PHASE;
+	always @(posedge clk_pixel) begin
+		demo_d <= {median_key_on, noise_key_on};
+		if (demo_d != {median_key_on, noise_key_on}) bayer_phase_cnt <= bayer_phase_cnt + 2'd1;
+	end
+	assign bayer_phase_key = bayer_phase_cnt;
+	assign median_on = (CAMERA_60FPS_RAW && BAYER_PHASE_FROM_KEYS) ? 1'b1 : median_key_on;
+	assign noise_on = (CAMERA_60FPS_RAW && BAYER_PHASE_FROM_KEYS) ? 1'b0 : noise_key_on;
 	wire [11:0] edge_low_threshold = (edge_threshold_active >> 1);
 	// The OV5640 module has a manually screwed lens: its VCM sink is not
 	// connected to a focus motor, so the run-time focus control is off.
@@ -1154,7 +1191,7 @@ module example_top
 		.key_n(key_n), .threshold_active(edge_threshold_active), .threshold_requested(),
 		.mode_active(edge_mode_active), .mode_requested(),
 		.freeze(frame_freeze),
-		.median_on(median_on), .noise_on(noise_on),
+		.median_on(median_key_on), .noise_on(noise_key_on),
 		.focus_mode(focus_mode), .focus_code(focus_code_pixel),
 		.tnr_mode(tnr_key_mode)
 	);
@@ -1491,13 +1528,14 @@ module example_top
 			flk_frame <= flk_frame + 20'd1;
 		end
 	end
-	fps_osd #(.SHOW_FOCUS(FOCUS_CONTROL_ENABLE)) u_fps_osd (
+	fps_osd #(.SHOW_FOCUS(FOCUS_CONTROL_ENABLE),
+		.SHOW_PHASE(CAMERA_60FPS_RAW && BAYER_PHASE_FROM_KEYS)) u_fps_osd (
 		.clk(clk_pixel), .rst_n(rstn_pixel), .vs(edge_vs), .de(edge_de),
 		.rgb_in(edge_rgb), .fps_bcd(camera_fps_bcd), .fps_valid(camera_fps_valid),
 		.threshold_in(edge_threshold_active),
 		.latency_ms(frame_latency_pixel), .latency_valid(frame_latency_pixel_valid),
 		.median_on(median_on), .noise_on(noise_on), .tnr_mode(tnr_mode),
-		.recognition_on(recognition_on),
+		.recognition_on(recognition_on), .bayer_phase(bayer_phase_cnt),
 		.change_pct(change_pct_pixel), .change_valid(change_valid_pixel),
 		.flicker(flk_value),
 		.focus_code(focus_code_pixel), .focus_mode(focus_mode),
