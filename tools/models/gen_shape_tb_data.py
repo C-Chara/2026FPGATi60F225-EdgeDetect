@@ -35,12 +35,24 @@ def checker(x0, y0, cols, rows, s):
     return f
 
 
+def bowtie(cx, cy, s, bridge):
+    def f(X, Y):
+        a = (X >= cx - s) & (X < cx) & (Y >= cy - s) & (Y < cy)
+        b = (X >= cx) & (X < cx + s) & (Y >= cy) & (Y < cy + s)
+        c = (np.abs(X - cx) < bridge) & (np.abs(Y - cy) < bridge)
+        return a | b | c
+    return f
+
+
 r = math.radians
 CASES = {
     'mixed': page([sf.ellipse(130, 110, 50, 50), sf.rect(330, 110, 150, 100, r(25)),
                    sf.triangle(520, 120, 60, r(10)), sf.ellipse(150, 270, 90, 45, r(20)),
                    sf.rounded(380, 270, 160, 100, 30), sf.rect(560, 280, 70, 70, r(40))]),
     'checker': page([checker(95, 30, 9, 6, 50)]),
+    # two bow ties (squares joined at a corner) and two triangles
+    'bowtie': page([bowtie(160, 120, 45, 12), bowtie(470, 120, 45, 16),
+                    sf.triangle(170, 280, 55, r(15)), sf.triangle(470, 270, 60, r(45))]),
 }
 
 case, out = sys.argv[1], sys.argv[2]

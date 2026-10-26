@@ -153,7 +153,13 @@ def classify(e):
     if aa * K_RECT_MIN <= lhs <= aa * K_RECT_MAX:
         return CLS_SQUARE if rounder else CLS_RECT
     if aa * K_TRI_MIN <= lhs <= aa * K_TRI_MAX:
-        return CLS_TRIANGLE
+        # triangles are not centrally symmetric: centroid off the box centre
+        off_x = abs(2 * e['Sx'] - A * (e['x0'] + e['x1']))
+        off_y = abs(2 * e['Sy'] - A * (e['y0'] + e['y1']))
+        wx = A * (e['x1'] - e['x0'] + 1)
+        wy = A * (e['y1'] - e['y0'] + 1)
+        if off_x >= (5 * wx) >> 6 or off_y >= (5 * wy) >> 6:
+            return CLS_TRIANGLE
     return CLS_NONE
 
 

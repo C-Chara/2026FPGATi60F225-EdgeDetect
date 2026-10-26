@@ -265,6 +265,8 @@ module shape_detector #(
     reg [63:0] cA, cSx, cSy, cSxx, cSyy, cSxy;
     reg [63:0] t1, c20, c02, c11, aa, m20, m02, m11, p1, p2, j2, dd, qd;
     reg [40:0] cbox;
+    // Triangle symmetry test: A*(x0+x1), A*(y0+y1), A*width, A*height
+    reg [63:0] t_bx, t_by, t_wx, t_wy;
     reg [4:0]  cstep;
     reg        cwait;
     reg [2:0]  cls;
@@ -275,6 +277,12 @@ module shape_detector #(
     wire [63:0] qn = dd + (p2 << 2);
     wire        rounder = (qn << 10) <= (qd << 3) + (qd << 2) + qd;
     wire [33:0] thr_calc = (gray_sum * 34'd175) >> 26;
+    // |2*Sx - A*(x0+x1)| = 2*A*|centroid - box centre|; compare with 5/64*A*width
+    wire [63:0] two_sx = cSx << 1, two_sy = cSy << 1;
+    wire [63:0] off_x = (two_sx > t_bx) ? two_sx - t_bx : t_bx - two_sx;
+    wire [63:0] off_y = (two_sy > t_by) ? two_sy - t_by : t_by - two_sy;
+    wire        tri_asym = (off_x >= ((t_wx << 2) + t_wx) >> 6) ||
+                           (off_y >= ((t_wy << 2) + t_wy) >> 6);
 
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
@@ -301,6 +309,7 @@ module shape_detector #(
             t1 <= 0; c20 <= 0; c02 <= 0; c11 <= 0; aa <= 0; m20 <= 0; m02 <= 0; m11 <= 0;
             p1 <= 0; p2 <= 0; j2 <= 0; dd <= 0; qd <= 0;
             cbox <= 0; cstep <= 0; cwait <= 0; cls <= 0;
+            t_bx <= 0; t_by <= 0; t_wx <= 0; t_wy <= 0;
             pend_count <= 0; pend_data <= 0;
             obj_count <= 0; obj_data <= 0;
         end else begin
@@ -531,6 +540,10 @@ module shape_detector #(
                             5'd12: begin op_a <= (p1 - p2) << 10; op_b <= aa; div_go <= 1; end
                             5'd13: begin op_a <= d_m; op_b <= d_m;  mul_go <= 1; end
                             5'd14: begin op_a <= m20 + m02; op_b <= m20 + m02; mul_go <= 1; end
+                            5'd15: begin op_a <= cA; op_b <= cbox[37:28] + cbox[27:18]; mul_go <= 1; end
+                            5'd16: begin op_a <= cA; op_b <= cbox[17:9] + cbox[8:0]; mul_go <= 1; end
+                            5'd17: begin op_a <= cA; op_b <= cbox[27:18] - cbox[37:28] + 10'd1; mul_go <= 1; end
+                            5'd18: begin op_a <= cA; op_b <= cbox[8:0] - cbox[17:9] + 9'd1; mul_go <= 1; end
                             default: ;
                         endcase
                         if (cstep == 5'd12 && p1 <= p2) begin
@@ -539,11 +552,11 @@ module shape_detector #(
                             cls <= CLS_NONE;
                             pstate <= P_C_STORE;
                         end
-                        if (cstep == 5'd15) begin
+                        if (cstep == 5'd19) begin
                             cwait <= 0;
                             if (j2 <= K_ELLIPSE_MAX) cls <= rounder ? CLS_CIRCLE : CLS_ELLIPSE;
                             else if (j2 >= K_RECT_MIN && j2 <= K_RECT_MAX) cls <= rounder ? CLS_SQUARE : CLS_RECT;
-                            else if (j2 >= K_TRI_MIN && j2 <= K_TRI_MAX) cls <= CLS_TRIANGLE;
+                            else if (j2 >= K_TRI_MIN && j2 <= K_TRI_MAX && tri_asym) cls <= CLS_TRIANGLE;
                             else cls <= CLS_NONE;
                             pstate <= P_C_STORE;
                         end
@@ -566,6 +579,10 @@ module shape_detector #(
                             5'd12: j2 <= r_div;
                             5'd13: dd <= r_mul;
                             5'd14: qd <= r_mul;
+                            5'd15: t_bx <= r_mul;
+                            5'd16: t_by <= r_mul;
+                            5'd17: t_wx <= r_mul;
+                            5'd18: t_wy <= r_mul;
                             default: ;
                         endcase
                     end
