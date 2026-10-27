@@ -67,10 +67,37 @@ CASES = {
                     sf.triangle(170, 280, 55, r(15)), sf.triangle(470, 270, 60, r(45))]),
 }
 
+def study_case(name):
+    """Scenes from shape_robust_study.py (median-filtered, as the hardware sees)."""
+    import shape_robust_study as st
+    rng = np.random.default_rng(11)
+    if name == 'small':          # distant shapes: radius 8..13 samples
+        shapes = [st.make_shapes(k, s, 60 + 105 * i, 120 + 120 * (i % 2), r(17 * i))
+                  for i, (k, s) in enumerate([('circle', 9), ('square', 10), ('triangle', 11),
+                                              ('ellipse', 9), ('rect', 10), ('circle', 13)])]
+        return st.render(shapes, 8.0, False, rng)
+    if name in ('texture', 'objects'):   # should give (almost) no detections
+        bg = st.clutter_background(name, np.random.default_rng(101))
+        if name == 'objects':
+            bg = np.minimum(bg, st.clutter_background('strokes', np.random.default_rng(102)))
+        return np.clip(np.round(st.median3(bg + rng.normal(0, 8.0, bg.shape))), 0, 255).astype(int)
+    if name == 'paper':          # shapes on a sheet in a textured scene
+        bg = st.clutter_background('texture', np.random.default_rng(201))
+        Y, X = np.mgrid[0:360, 0:640]
+        bg = np.where((np.abs(X - 320) < 170) & (np.abs(Y - 180) < 110), 255.0, bg)
+        shapes = [st.make_shapes('circle', 30, 230, 150, 0), st.make_shapes('square', 22, 400, 150, r(20)),
+                  st.make_shapes('triangle', 26, 320, 230, r(10))]
+        return st.render(shapes, 8.0, False, rng, background=bg)
+    raise KeyError(name)
+
+
 case, out = sys.argv[1], sys.argv[2]
 os.makedirs(out, exist_ok=True)
-img = sf.render(CASES[case])
-gray = np.clip(np.round(img), 0, 255).astype(int)          # 640 x 360
+if case in CASES:
+    img = sf.render(CASES[case])
+    gray = np.clip(np.round(img), 0, 255).astype(int)      # 640 x 360
+else:
+    gray = study_case(case)
 full = np.repeat(np.repeat(gray, 2, axis=0), 2, axis=1)    # 1280 x 720
 with open(os.path.join(out, 'shape_img.hex'), 'w') as fh:
     fh.write('\n'.join('%02x' % v for v in full.flatten()))

@@ -1549,16 +1549,32 @@ module example_top
 	// 0: the earlier edge-grid search for one circle and one axis-aligned
 	//    rectangle (circle_geometry_detector).
 	localparam SHAPE_DETECTOR = 1'b1;
+	localparam SHAPE_TRACKER = 1'b1;
 	wire [23:0] shape_rgb;
 	wire shape_vs, shape_hs, shape_de;
 	generate if (SHAPE_DETECTOR) begin: ccl_shapes
-		wire [5:0] shape_count;
-		wire [32*41-1:0] shape_objects;
+		wire [5:0] shape_count, detected_count;
+		wire [32*41-1:0] shape_objects, detected_objects;
+		wire detected_strobe;
 		shape_detector u_shape_detector (
 			.clk(clk_pixel), .rst_n(rstn_pixel), .vsync_n(filtered_vs),
 			.de(filtered_valid), .gray(filtered_pixel),
-			.obj_count(shape_count), .obj_data(shape_objects), .threshold()
+			.obj_count(detected_count), .obj_data(detected_objects), .threshold(),
+			.obj_strobe(detected_strobe)
 		);
+		// Cross-frame voting: a box appears after two detections, keeps its
+		// class until three detections agree on a new one, and survives two
+		// missed analyses. SHAPE_TRACKER = 0 shows the raw detector output.
+		if (SHAPE_TRACKER) begin: voting
+			shape_tracker u_shape_tracker (
+				.clk(clk_pixel), .rst_n(rstn_pixel), .in_strobe(detected_strobe),
+				.in_count(detected_count), .in_data(detected_objects),
+				.obj_count(shape_count), .obj_data(shape_objects)
+			);
+		end else begin: raw
+			assign shape_count = detected_count;
+			assign shape_objects = detected_objects;
+		end
 		// Three-clock overlay; the sync signals are delayed with it.
 		shape_overlay #(.X_OFF(ALIGN_PIXEL_DELAY), .Y_OFF(ALIGN_ROW_DELAY - 1)) u_shape_overlay (
 			.clk(clk_pixel), .rst_n(rstn_pixel), .enable(recognition_on),

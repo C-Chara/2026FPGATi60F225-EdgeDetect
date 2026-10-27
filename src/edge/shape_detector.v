@@ -11,16 +11,23 @@
 //           a run takes the label of the first run above it; when it also
 //           touches another label the pair is stored and merged later.
 //           Each label accumulates area, sums of x, y, x^2, y^2, xy, its
-//           bounding box and a border flag.
+//           bounding box and a border flag, and for clutter rejection the
+//           sum of its gray, its run and top-edge counts and the gray of the
+//           sample two to the left of each run (its surroundings).
 //   PROCESS union of the stored pairs, folding of every merged label into
 //           its parent (highest label first), then classification of every
 //           root from J^2 = det(second central moments) / A^4 (ellipse
 //           0.0796^2, rectangle 0.0833^2, triangle 0.0962^2) and the moment
-//           aspect ratio (round below about 1.12).
+//           aspect ratio (round below about 1.12). Rejected as clutter:
+//           mean gray above 0.45 x the surroundings (not ink on paper),
+//           runs + top edges above 1.5 x (width + height) (ragged, concave
+//           or holed), aspect above about 3.5 (strokes), and for the
+//           symmetric classes a centroid more than 1/16 of the box size off
+//           the box centre. Study: tools/models/shape_robust_study.py.
 // Results: up to MAX_OBJECTS objects, published at the end of PROCESS.
 module shape_detector #(
     parameter integer MAX_OBJECTS = 32,
-    parameter integer A_MIN = 600,
+    parameter integer A_MIN = 150,
     parameter integer A_MAX = 100000
 )(
     input  wire        clk,
@@ -31,7 +38,8 @@ module shape_detector #(
     output reg  [5:0]  obj_count,
     // per object {cls[2:0], x0[9:0], x1[9:0], y0[8:0], y1[8:0]}, half resolution
     output reg  [MAX_OBJECTS*41-1:0] obj_data,
-    output reg  [7:0]  threshold
+    output reg  [7:0]  threshold,
+    output reg         obj_strobe      // one clock: obj_count / obj_data are new
 );
     localparam integer SW = 640, SH = 360;
     localparam [2:0] CLS_NONE = 3'd0, CLS_CIRCLE = 3'd1, CLS_ELLIPSE = 3'd2,
@@ -39,7 +47,10 @@ module shape_detector #(
     // J^2 * 2^26 bands
     localparam [63:0] K_ELLIPSE_MAX = 64'd432723, K_RECT_MIN = 64'd452340,
                       K_RECT_MAX = 64'd484861, K_TRI_MIN = 64'd543582,
-                      K_TRI_MAX = 64'd711957;
+                      K_TRI_MAX = 64'd640000;
+    // Fill of the bounding box, floor(64 * A / (w * h)): circle, ellipse, triangle
+    localparam [63:0] FILL_C_MIN = 47, FILL_C_MAX = 55, FILL_E_MIN = 42, FILL_E_MAX = 55,
+                      FILL_T_MIN = 30, FILL_T_MAX = 39;
 
     // ------------------------------------------------------------------
     // Label statistics word
@@ -47,7 +58,10 @@ module shape_detector #(
     localparam integer OA = 0, OSX = OA + WA, OSY = OSX + WSX, OSXX = OSY + WSY,
                        OSYY = OSXX + WSXX, OSXY = OSYY + WSYY, OX0 = OSXY + WSXY,
                        OX1 = OX0 + 10, OY0 = OX1 + 10, OY1 = OY0 + 9, OFL = OY1 + 9,
-                       SWID = OFL + 1;
+                       OG = OFL + 1, OT = OG + 26, ORN = OT + 18, OSO = ORN + 18,
+                       ONO = OSO + 26, SWID = ONO + 18;
+    // OG gray sum, OT top-edge samples, ORN runs, OSO / ONO sum and count of
+    // the surrounding samples (one per run, two samples left of its start)
 
     // ------------------------------------------------------------------
     // Input timing: full-resolution column / row counters
@@ -84,6 +98,7 @@ module shape_detector #(
     reg [8:0]  run_id;
     reg [8:0]  srow;
     reg [7:0]  thr_use;
+    reg [7:0]  s1_gray, s2_gray, g_m1, g_m2;   // g_m1/g_m2: samples x-1, x-2 of stage 2
 
     reg [8:0]  lb_ram [0:SW-1];
     reg [9:0]  run_ram [0:1023];
@@ -98,6 +113,7 @@ module shape_detector #(
         if (runw_en) run_ram[runw_addr] <= runw_data;
     end
     wire [9:0] up_label = (s2_lb != 0 && srow != 0) ? run_q : 10'd0;
+    wire       s2_top = (s2_lb == 0 || srow == 0);    // no foreground sample above
 
     reg        in_run;
     reg [9:0]  run_x0;
@@ -105,6 +121,10 @@ module shape_detector #(
     reg [9:0]  run_n;
     reg [18:0] run_sx;
     reg [27:0] run_sxx;
+    reg [17:0] run_sg;         // gray sum of the run
+    reg [9:0]  run_top;        // samples without a foreground sample above
+    reg [7:0]  run_so;         // surrounding sample (left of the run start)
+    reg        run_no;         // run_so is valid (run starts at x >= 2)
     reg [18:0] sq;             // x^2 of the stage-2 sample
     reg [19:0] last_pair;
     reg        rowend_1, rowend_2;
@@ -116,10 +136,18 @@ module shape_detector #(
     reg [27:0] ev_sxx;
     reg [9:0]  ev_label;
     reg [8:0]  ev_y;
+    reg [17:0] ev_sg;
+    reg [9:0]  ev_top;
+    reg [7:0]  ev_so;
+    reg        ev_no;
     reg        up_v, up_new;
     reg [9:0]  up_x0, up_x1, up_n;
     reg [18:0] up_sx;
     reg [27:0] up_sxx;
+    reg [17:0] up_sg;
+    reg [9:0]  up_top;
+    reg [7:0]  up_so;
+    reg        up_no;
     reg [9:0]  up_lab;
     reg [8:0]  up_y;
     reg [10:0] next_label;     // next free label, 1024 = full
@@ -178,6 +206,10 @@ module shape_detector #(
         input [18:0]     sxr;
         input [27:0]     sxxr;
         input [8:0]      y;
+        input [17:0]     sgr;
+        input [9:0]      topr;
+        input [7:0]      sor;
+        input            no_v;
         reg   [16:0]     ysq;
         reg              border;
         begin
@@ -195,6 +227,11 @@ module shape_detector #(
             add_run[OY0 +: 9]  = is_new ? y : old[OY0 +: 9];
             add_run[OY1 +: 9]  = y;
             add_run[OFL]       = (is_new ? 1'b0 : old[OFL]) | border;
+            add_run[OG  +: 26] = (is_new ? 26'd0 : old[OG  +: 26]) + sgr;
+            add_run[OT  +: 18] = (is_new ? 18'd0 : old[OT  +: 18]) + topr;
+            add_run[ORN +: 18] = (is_new ? 18'd0 : old[ORN +: 18]) + 18'd1;
+            add_run[OSO +: 26] = (is_new ? 26'd0 : old[OSO +: 26]) + (no_v ? sor : 8'd0);
+            add_run[ONO +: 18] = (is_new ? 18'd0 : old[ONO +: 18]) + no_v;
         end
     endfunction
     // Child folded into its parent
@@ -213,6 +250,11 @@ module shape_detector #(
             merge_stats[OY0 +: 9]  = (c[OY0 +: 9]  < p[OY0 +: 9])  ? c[OY0 +: 9]  : p[OY0 +: 9];
             merge_stats[OY1 +: 9]  = (c[OY1 +: 9]  > p[OY1 +: 9])  ? c[OY1 +: 9]  : p[OY1 +: 9];
             merge_stats[OFL]       = p[OFL] | c[OFL];
+            merge_stats[OG  +: 26] = p[OG  +: 26] + c[OG  +: 26];
+            merge_stats[OT  +: 18] = p[OT  +: 18] + c[OT  +: 18];
+            merge_stats[ORN +: 18] = p[ORN +: 18] + c[ORN +: 18];
+            merge_stats[OSO +: 26] = p[OSO +: 26] + c[OSO +: 26];
+            merge_stats[ONO +: 18] = p[ONO +: 18] + c[ONO +: 18];
         end
     endfunction
 
@@ -281,8 +323,24 @@ module shape_detector #(
     wire [63:0] two_sx = cSx << 1, two_sy = cSy << 1;
     wire [63:0] off_x = (two_sx > t_bx) ? two_sx - t_bx : t_bx - two_sx;
     wire [63:0] off_y = (two_sy > t_by) ? two_sy - t_by : t_by - two_sy;
-    wire        tri_asym = (off_x >= ((t_wx << 2) + t_wx) >> 6) ||
-                           (off_y >= ((t_wy << 2) + t_wy) >> 6);
+    wire        tri_asym = (off_x >= ((t_wx << 2) + (t_wx << 1)) >> 6) ||
+                           (off_y >= ((t_wy << 2) + (t_wy << 1)) >> 6);
+    reg [63:0] t_wh, fill;
+    wire        fill_c = fill >= FILL_C_MIN && fill <= FILL_C_MAX;
+    wire        fill_e = fill >= FILL_E_MIN && fill <= FILL_E_MAX;
+    wire        fill_t = fill >= FILL_T_MIN && fill <= FILL_T_MAX;
+    // Clutter rejection. cG*cNO vs cSO*cA: mean inside <= 9/20 of the mean of
+    // the surrounding samples; aspect <= ~3.5 (Qn*1024 <= Qd*740); circle,
+    // ellipse, square and rectangle centred within 1/16 of the box size.
+    reg [63:0] cG, cSO, cNO, t_g, t_s;
+    wire        contrast_ok = (t_g << 4) + (t_g << 2) <= (t_s << 3) + t_s;
+    wire        aspect_ok = (qn << 10) <= (qd << 9) + (qd << 7) + (qd << 6) + (qd << 5) + (qd << 2);
+    wire        centred = (off_x <= (t_wx >> 4)) && (off_y <= (t_wy >> 4));
+    // runs + top edges <= 1.5 x (width + height), from the statistics word
+    wire [10:0] q_w = stats_q[OX1 +: 10] - stats_q[OX0 +: 10] + 11'd1;
+    wire [9:0]  q_h = stats_q[OY1 +: 9] - stats_q[OY0 +: 9] + 10'd1;
+    wire [19:0] q_rt = stats_q[ORN +: 18] + stats_q[OT +: 18];
+    wire        convex_ok = (q_rt << 1) <= ({9'd0, q_w} + q_h) * 3;
 
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
@@ -310,10 +368,15 @@ module shape_detector #(
             p1 <= 0; p2 <= 0; j2 <= 0; dd <= 0; qd <= 0;
             cbox <= 0; cstep <= 0; cwait <= 0; cls <= 0;
             t_bx <= 0; t_by <= 0; t_wx <= 0; t_wy <= 0;
+            cG <= 0; cSO <= 0; cNO <= 0; t_g <= 0; t_s <= 0; t_wh <= 0; fill <= 0;
+            s1_gray <= 0; s2_gray <= 0; g_m1 <= 0; g_m2 <= 0;
+            run_sg <= 0; run_top <= 0; run_so <= 0; run_no <= 0;
+            ev_sg <= 0; ev_top <= 0; ev_so <= 0; ev_no <= 0;
+            up_sg <= 0; up_top <= 0; up_so <= 0; up_no <= 0;
             pend_count <= 0; pend_data <= 0;
-            obj_count <= 0; obj_data <= 0;
+            obj_count <= 0; obj_data <= 0; obj_strobe <= 0;
         end else begin
-            runw_en <= 0; stats_we <= 0; pair_we <= 0; parent_we <= 0;
+            runw_en <= 0; stats_we <= 0; pair_we <= 0; parent_we <= 0; obj_strobe <= 0;
             mul_go <= 0; div_go <= 0;
 
             // ---------------- frame phase ----------------
@@ -346,9 +409,13 @@ module shape_detector #(
             s2_x <= s1_x;
             s2_last <= s1_last;
             s2_lb <= lb_q;
+            s1_gray <= gray;
+            s2_gray <= s1_gray;
 
             ev_v <= 0;
             if (s2_v) begin
+                g_m1 <= s2_gray;
+                g_m2 <= g_m1;
                 if (s2_fg) begin
                     if (!in_run) begin
                         in_run <= 1;
@@ -357,10 +424,16 @@ module shape_detector #(
                         run_n <= 10'd1;
                         run_sx <= s2_x;
                         run_sxx <= sq;
+                        run_sg <= s2_gray;
+                        run_top <= s2_top;
+                        run_so <= g_m2;
+                        run_no <= (s2_x >= 10'd2);
                     end else begin
                         run_n <= run_n + 10'd1;
                         run_sx <= run_sx + s2_x;
                         run_sxx <= run_sxx + sq;
+                        run_sg <= run_sg + s2_gray;
+                        run_top <= run_top + s2_top;
                         if (up_label != 0) begin
                             if (run_label == 0) run_label <= up_label;
                             else if (up_label != run_label && {run_label, up_label} != last_pair) begin
@@ -384,6 +457,10 @@ module shape_detector #(
                         ev_sxx <= in_run ? run_sxx + sq : {9'd0, sq};
                         ev_label <= (in_run && run_label != 0) ? run_label : up_label;
                         ev_y <= srow;
+                        ev_sg <= in_run ? run_sg + s2_gray : {10'd0, s2_gray};
+                        ev_top <= in_run ? run_top + s2_top : {9'd0, s2_top};
+                        ev_so <= in_run ? run_so : g_m2;
+                        ev_no <= in_run ? run_no : (s2_x >= 10'd2);
                     end
                 end else if (in_run) begin
                     in_run <= 0;
@@ -395,6 +472,10 @@ module shape_detector #(
                     ev_sxx <= run_sxx;
                     ev_label <= run_label;
                     ev_y <= srow;
+                    ev_sg <= run_sg;
+                    ev_top <= run_top;
+                    ev_so <= run_so;
+                    ev_no <= run_no;
                 end
                 sq <= s2_last ? 19'd0 : sq + {8'd0, s2_x, 1'b0} + 19'd1;
             end
@@ -405,6 +486,7 @@ module shape_detector #(
                 up_v <= 1;
                 up_x0 <= ev_x0; up_x1 <= ev_x1; up_n <= ev_n;
                 up_sx <= ev_sx; up_sxx <= ev_sxx; up_y <= ev_y;
+                up_sg <= ev_sg; up_top <= ev_top; up_so <= ev_so; up_no <= ev_no;
                 runw_en <= 1;
                 runw_addr <= {row_bank, run_id};
                 if (ev_label != 0) begin
@@ -423,7 +505,8 @@ module shape_detector #(
             if (up_v && up_lab != 0) begin
                 stats_we <= 1;
                 stats_waddr <= up_lab;
-                stats_wdata <= add_run(stats_q, up_new, up_x0, up_x1, up_n, up_sx, up_sxx, up_y);
+                stats_wdata <= add_run(stats_q, up_new, up_x0, up_x1, up_n, up_sx, up_sxx, up_y,
+                                       up_sg, up_top, up_so, up_no);
             end
 
             // after the last sample of a sampled row (and its run end)
@@ -505,7 +588,8 @@ module shape_detector #(
                 end
                 P_C_CHK: begin
                     if (parent_q != pidx[9:0] || stats_q[OFL] ||
-                        stats_q[OA +: WA] < A_MIN || stats_q[OA +: WA] > A_MAX) begin
+                        stats_q[OA +: WA] < A_MIN || stats_q[OA +: WA] > A_MAX ||
+                        stats_q[ONO +: 18] == 0 || !convex_ok) begin
                         pidx <= pidx + 11'd1;
                         pstate <= P_C_RD;
                     end else begin
@@ -515,6 +599,9 @@ module shape_detector #(
                         cSxx <= stats_q[OSXX +: WSXX];
                         cSyy <= stats_q[OSYY +: WSYY];
                         cSxy <= stats_q[OSXY +: WSXY];
+                        cG   <= stats_q[OG  +: 26];
+                        cSO  <= stats_q[OSO +: 26];
+                        cNO  <= stats_q[ONO +: 18];
                         cbox <= {3'd0, stats_q[OX0 +: 10], stats_q[OX1 +: 10],
                                  stats_q[OY0 +: 9], stats_q[OY1 +: 9]};
                         cstep <= 0; cwait <= 0; cls <= CLS_NONE;
@@ -544,6 +631,11 @@ module shape_detector #(
                             5'd16: begin op_a <= cA; op_b <= cbox[17:9] + cbox[8:0]; mul_go <= 1; end
                             5'd17: begin op_a <= cA; op_b <= cbox[27:18] - cbox[37:28] + 10'd1; mul_go <= 1; end
                             5'd18: begin op_a <= cA; op_b <= cbox[8:0] - cbox[17:9] + 9'd1; mul_go <= 1; end
+                            5'd19: begin op_a <= cG;  op_b <= cNO; mul_go <= 1; end
+                            5'd20: begin op_a <= cSO; op_b <= cA;  mul_go <= 1; end
+                            5'd21: begin op_a <= cbox[27:18] - cbox[37:28] + 10'd1;
+                                         op_b <= cbox[8:0] - cbox[17:9] + 9'd1; mul_go <= 1; end
+                            5'd22: begin op_a <= cA << 6; op_b <= t_wh; div_go <= 1; end
                             default: ;
                         endcase
                         if (cstep == 5'd12 && p1 <= p2) begin
@@ -552,11 +644,16 @@ module shape_detector #(
                             cls <= CLS_NONE;
                             pstate <= P_C_STORE;
                         end
-                        if (cstep == 5'd19) begin
+                        if (cstep == 5'd23) begin
                             cwait <= 0;
-                            if (j2 <= K_ELLIPSE_MAX) cls <= rounder ? CLS_CIRCLE : CLS_ELLIPSE;
-                            else if (j2 >= K_RECT_MIN && j2 <= K_RECT_MAX) cls <= rounder ? CLS_SQUARE : CLS_RECT;
-                            else if (j2 >= K_TRI_MIN && j2 <= K_TRI_MAX && tri_asym) cls <= CLS_TRIANGLE;
+                            if (!contrast_ok || !aspect_ok) cls <= CLS_NONE;
+                            else if (j2 <= K_ELLIPSE_MAX)
+                                cls <= (!centred || !(rounder ? fill_c : fill_e)) ? CLS_NONE :
+                                       rounder ? CLS_CIRCLE : CLS_ELLIPSE;
+                            else if (j2 >= K_RECT_MIN && j2 <= K_RECT_MAX)
+                                cls <= !centred ? CLS_NONE : rounder ? CLS_SQUARE : CLS_RECT;
+                            else if (j2 >= K_TRI_MIN && j2 <= K_TRI_MAX && tri_asym && fill_t)
+                                cls <= CLS_TRIANGLE;
                             else cls <= CLS_NONE;
                             pstate <= P_C_STORE;
                         end
@@ -583,6 +680,10 @@ module shape_detector #(
                             5'd16: t_by <= r_mul;
                             5'd17: t_wx <= r_mul;
                             5'd18: t_wy <= r_mul;
+                            5'd19: t_g <= r_mul;
+                            5'd20: t_s <= r_mul;
+                            5'd21: t_wh <= r_mul;
+                            5'd22: fill <= r_div;
                             default: ;
                         endcase
                     end
@@ -598,6 +699,7 @@ module shape_detector #(
                 end
                 P_DONE: begin
                     obj_count <= pend_count;
+                    obj_strobe <= 1;
                     obj_data <= pend_data;
                     post_done <= 1;
                     pstate <= P_IDLE;

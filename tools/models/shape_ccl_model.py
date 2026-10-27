@@ -14,7 +14,7 @@ import math
 W, H = 640, 360
 MAX_LABELS = 1023
 MAX_OBJECTS = 32
-A_MIN, A_MAX = 600, 100000
+A_MIN, A_MAX = 150, 100000
 
 CLS_NONE, CLS_CIRCLE, CLS_ELLIPSE, CLS_SQUARE, CLS_RECT, CLS_TRIANGLE = 0, 1, 2, 3, 4, 5
 CLS_NAME = {0: '-', 1: 'circle', 2: 'ellipse', 3: 'square', 4: 'rect', 5: 'triangle'}
@@ -25,7 +25,7 @@ K_ELLIPSE_MAX = 432723     # J <= 0.0803
 K_RECT_MIN = 452340        # J >= 0.0821
 K_RECT_MAX = 484861        # J <= 0.0850
 K_TRI_MIN = 543582         # J >= 0.0900
-K_TRI_MAX = 711957         # J <= 0.1030
+K_TRI_MAX = 640000         # J <= 0.0977 (digitized triangles stay below 0.0962)
 Q_ROUND = 13               # aspect <= ~1.12: Qn * 1024 <= Qd * 13
 
 
@@ -35,6 +35,19 @@ def threshold_from_sum(gray_sum):
 
 
 MAX_PAIRS = 1023
+OUTER = 2                  # surrounding sample: 2 samples left of each run start
+# Clutter rejection (tools/models/shape_robust_study.py, docs/sim_data):
+RHO_NUM, RHO_DEN = 9, 20   # mean inside <= 0.45 x mean of the surrounding samples
+CVX_NUM, CVX_DEN = 3, 2    # runs + top edges <= 1.5 x (width + height)
+ASP_MAX = 740              # aspect <= ~3.5: Qn * 1024 <= Qd * 740
+SYM_SHIFT = 4              # circle/ellipse/square/rect: centroid within 1/16
+                           # of the box size from the box centre
+TRI_OFF = 6                # triangle: centroid at least 6/64 off the box centre
+# Fill of the bounding box, floor(64 * A / (w * h)): circle ~0.79, ellipse
+# 0.67..0.84, triangle at most 0.5 (+ digitization)
+FILL_CIRCLE = (47, 55)
+FILL_ELLIPSE = (42, 55)
+FILL_TRIANGLE = (30, 39)
 
 
 def label_frame(gray, thr):
@@ -60,7 +73,7 @@ def label_frame(gray, thr):
                 if not in_run:
                     in_run = True
                     x0, run_label = x, 0
-                    n = sx = sxx = 0
+                    n = sx = sxx = sg = tops = 0
                 if up:
                     if run_label == 0:
                         run_label = up
@@ -71,6 +84,9 @@ def label_frame(gray, thr):
                 n += 1
                 sx += x
                 sxx += x * x
+                sg += gray[y][x]
+                if y == 0 or not lb_prev[x]:
+                    tops += 1                     # top boundary of this sample
                 lb_cur[x] = run_id + 1
             elif in_run:
                 in_run = False
@@ -81,6 +97,7 @@ def label_frame(gray, thr):
                         lab = next_label
                         next_label += 1
                         labels[lab] = dict(A=0, Sx=0, Sy=0, Sxx=0, Syy=0, Sxy=0,
+                                           G=0, T=0, R=0, SO=0, NO=0,
                                            x0=x0, x1=x1, y0=y, y1=y, flags=0)
                 if lab:
                     e = labels[lab]
@@ -92,6 +109,13 @@ def label_frame(gray, thr):
                     e['Sxx'] += sxx
                     e['Syy'] += n * y * y
                     e['Sxy'] += y * sx
+                    e['G'] += sg
+                    e['T'] += tops
+                    e['R'] += 1
+                    # surrounding brightness: the sample OUTER left of the run
+                    if x0 >= OUTER:
+                        e['SO'] += gray[y][x0 - OUTER]
+                        e['NO'] += 1
                     e['x0'] = min(e['x0'], x0)
                     e['x1'] = max(e['x1'], x1)
                     e['y0'] = min(e['y0'], y)
@@ -120,7 +144,7 @@ def resolve(labels, pairs):
         p = parent[lab]
         if p != lab and lab in labels and p in labels:
             c, e = labels[lab], labels[p]
-            for k in ('A', 'Sx', 'Sy', 'Sxx', 'Syy', 'Sxy'):
+            for k in ('A', 'Sx', 'Sy', 'Sxx', 'Syy', 'Sxy', 'G', 'T', 'R', 'SO', 'NO'):
                 e[k] += c[k]
             e['x0'] = min(e['x0'], c['x0'])
             e['x1'] = max(e['x1'], c['x1'])
@@ -130,9 +154,20 @@ def resolve(labels, pairs):
     return [lab for lab in sorted(labels) if parent[lab] == lab]
 
 
+def clutter_ok(e):
+    """Ink on paper: dark against bright surroundings, convex without holes."""
+    w = e['x1'] - e['x0'] + 1
+    h = e['y1'] - e['y0'] + 1
+    if e['NO'] == 0:
+        return False
+    if RHO_DEN * e['G'] * e['NO'] > RHO_NUM * e['SO'] * e['A']:
+        return False
+    return CVX_DEN * (e['R'] + e['T']) <= CVX_NUM * (w + h)
+
+
 def classify(e):
     A = e['A']
-    if not (A_MIN <= A <= A_MAX) or e['flags']:
+    if not (A_MIN <= A <= A_MAX) or e['flags'] or not clutter_ok(e):
         return CLS_NONE
     c20 = A * e['Sxx'] - e['Sx'] * e['Sx']
     c02 = A * e['Syy'] - e['Sy'] * e['Sy']
@@ -148,17 +183,28 @@ def classify(e):
     qn = (m20 - m02) ** 2 + 4 * m11 * m11
     qd = (m20 + m02) ** 2
     rounder = (qn << 10) <= qd * Q_ROUND
+    if (qn << 10) > qd * ASP_MAX:
+        return CLS_NONE                  # strokes, cables, frame edges
+    # centroid offset from the box centre (2*A*|centroid - centre|)
+    off_x = abs(2 * e['Sx'] - A * (e['x0'] + e['x1']))
+    off_y = abs(2 * e['Sy'] - A * (e['y0'] + e['y1']))
+    wx = A * (e['x1'] - e['x0'] + 1)
+    wy = A * (e['y1'] - e['y0'] + 1)
+    centred = off_x <= wx >> SYM_SHIFT and off_y <= wy >> SYM_SHIFT
+    fill = (A << 6) // ((e['x1'] - e['x0'] + 1) * (e['y1'] - e['y0'] + 1))
     if lhs <= aa * K_ELLIPSE_MAX:
+        lo, hi = FILL_CIRCLE if rounder else FILL_ELLIPSE
+        if not centred or not lo <= fill <= hi:
+            return CLS_NONE
         return CLS_CIRCLE if rounder else CLS_ELLIPSE
     if aa * K_RECT_MIN <= lhs <= aa * K_RECT_MAX:
+        if not centred:
+            return CLS_NONE
         return CLS_SQUARE if rounder else CLS_RECT
     if aa * K_TRI_MIN <= lhs <= aa * K_TRI_MAX:
         # triangles are not centrally symmetric: centroid off the box centre
-        off_x = abs(2 * e['Sx'] - A * (e['x0'] + e['x1']))
-        off_y = abs(2 * e['Sy'] - A * (e['y0'] + e['y1']))
-        wx = A * (e['x1'] - e['x0'] + 1)
-        wy = A * (e['y1'] - e['y0'] + 1)
-        if off_x >= (5 * wx) >> 6 or off_y >= (5 * wy) >> 6:
+        asym = off_x >= (TRI_OFF * wx) >> 6 or off_y >= (TRI_OFF * wy) >> 6
+        if FILL_TRIANGLE[0] <= fill <= FILL_TRIANGLE[1] and asym:
             return CLS_TRIANGLE
     return CLS_NONE
 
