@@ -262,6 +262,37 @@ def classify(e):
     return CLS_NONE
 
 
+MAX_DIGITS = 4
+A_DIG = 60                 # digit candidates may be smaller than shapes
+
+
+def digit_candidate(e):
+    """Objects handed to the digit reader: classified as no shape, with
+    moments (det > 0), ink on paper, 1.25 <= height / width <= 6, height >= 12."""
+    A = e['A']
+    if not (A_DIG <= A <= A_MAX) or e['flags'] or e['NO'] == 0:
+        return False
+    if classify(e) != CLS_NONE or not clutter_ok(e):
+        return False
+    c20 = A * e['Sxx'] - e['Sx'] * e['Sx']
+    c02 = A * e['Syy'] - e['Sy'] * e['Sy']
+    c11 = A * e['Sxy'] - e['Sx'] * e['Sy']
+    aa = A * A
+    det = ((c20 << 8) // aa) * ((c02 << 8) // aa) - ((abs(c11) << 8) // aa) ** 2
+    w = e['x1'] - e['x0'] + 1
+    h = e['y1'] - e['y0'] + 1
+    return det > 0 and h >= 12 and 4 * h >= 5 * w and h <= 6 * w
+
+
+def digit_list(labels, roots):
+    out = []
+    for lab in roots:
+        e = labels[lab]
+        if digit_candidate(e) and len(out) < MAX_DIGITS:
+            out.append((e['x0'], e['x1'], e['y0'], e['y1']))
+    return out
+
+
 def classify_frame(gray, thr):
     labels, pairs = label_frame(gray, thr)
     roots = resolve(labels, pairs)
