@@ -54,9 +54,39 @@ FILL_ELLIPSE = (42, 55)
 FILL_TRIANGLE = (30, 39)
 
 
+# Local threshold (lens vignetting, uneven light): 20 x 12 blocks of 32 x 30
+# samples; per block the brightest min(g[x-1], g[x]) of the previous frame,
+# widened to the 7 x 7 block neighbourhood (D); the threshold of a sample is
+# D * 141 / 256 (0.55 x local paper white), kept within 0.5 .. 1.25 x the
+# global threshold (inside large dark shapes D is the ink itself).
+LOCAL_THR = True
+BW, BH, BX, BY, BR = 32, 30, 20, 12, 3
+
+
+def light_map(gray):
+    M = [[0] * BX for _ in range(BY)]
+    for y in range(H):
+        for x in range(W):
+            v = gray[y][x] if x == 0 else min(gray[y][x], gray[y][x - 1])
+            j, i = y // BH, x // BW
+            if v > M[j][i]:
+                M[j][i] = v
+    D = [[max(M[jj][ii] for jj in range(max(0, j - BR), min(BY, j + BR + 1))
+              for ii in range(max(0, i - BR), min(BX, i + BR + 1)))
+          for i in range(BX)] for j in range(BY)]
+    return D
+
+
+def local_threshold(d, thr):
+    t = (d * 141) >> 8
+    lo, hi = thr >> 1, thr + (thr >> 2)
+    return lo if t < lo else hi if t > hi else t
+
+
 def label_frame(gray, thr):
     """Raster pass. Returns (labels, pairs): per-label partial stats and the
     list of (a, b) label pairs found to belong to the same object."""
+    D = light_map(gray) if LOCAL_THR else None
     labels = {}              # label -> dict of stats
     pairs = []
     last_pair = None
@@ -64,7 +94,11 @@ def label_frame(gray, thr):
     lb_prev = [0] * W        # run id + 1 of the run above (0 = background)
     prt = [0] * 330          # previous-row run id -> label
     for y in range(H):
-        raw = [gray[y][x] < thr for x in range(W)] + [False, False]
+        if LOCAL_THR:
+            tl = [local_threshold(D[y // BH][i], thr) for i in range(BX)]
+            raw = [gray[y][x] < tl[x // BW] for x in range(W)] + [False, False]
+        else:
+            raw = [gray[y][x] < thr for x in range(W)] + [False, False]
         # gap closing: a light gap of 1 or 2 samples between dark samples is dark
         fgrow = [raw[x] or (x >= 1 and raw[x - 1] and (raw[x + 1] or raw[x + 2])) or
                  (x >= 2 and raw[x - 2] and raw[x + 1]) for x in range(W)]

@@ -28,7 +28,8 @@
 module shape_detector #(
     parameter integer MAX_OBJECTS = 32,
     parameter integer A_MIN = 150,
-    parameter integer A_MAX = 100000
+    parameter integer A_MAX = 100000,
+    parameter LOCAL_THR = 1'b1           // 0: one threshold for the whole frame
 )(
     input  wire        clk,
     input  wire        rst_n,
@@ -108,6 +109,116 @@ module shape_detector #(
     reg [7:0]  thr_use;
     reg [7:0]  s1_gray, s2_gray, g_m1, g_m2, g_m3, g_m4;   // g_mk: sample x-k of stage 2
 
+    // Local threshold (lens vignetting, uneven light). Every frame, per block
+    // of 32 x 30 samples (20 x 12 blocks), the brightest min(g[x-1], g[x])
+    // goes to light_m; in the vertical blanking light_d gets the maximum over
+    // the 7 x 7 block neighbourhood. The threshold of a sample is
+    // light_d * 141 / 256 (0.55 x the local paper white), within 0.5 .. 1.25 x
+    // the global threshold (inside a large dark shape light_d is the ink).
+    wire       lsample = vsync_n && de && !xf[0] && !yf[0] && yf < 2*SH;
+    reg  [7:0] lprev;                     // previous sample of the row
+    wire [7:0] lval = (sx_now == 0 || gray < lprev) ? gray : lprev;
+    reg  [7:0] blk_max [0:19];            // maxima of the current block row
+    reg  [4:0] row_in_blk;                // sampled row within the block row
+    reg  [3:0] lby;                       // block row
+    reg        blk_first;                 // first sampled row of a block row
+    reg  [4:0] lwr;                       // copy of blk_max into light_m
+    reg        lwr_on;
+    reg  [7:0] light_m [0:511];
+    reg  [7:0] light_d [0:511];
+    integer    q;
+    initial for (q = 0; q < 512; q = q + 1) light_d[q] = 8'd0;
+    reg  [8:0] lm_raddr, ld_raddr, ld_waddr;
+    reg  [7:0] lm_q, ld_q;
+    reg        ld_we;
+    reg  [7:0] ld_wdata;
+    always @(posedge clk) begin
+        if (lwr_on) light_m[{lby, lwr}] <= blk_max[lwr];
+        lm_q <= light_m[lm_raddr];
+        if (ld_we) light_d[ld_waddr] <= ld_wdata;
+        ld_q <= light_d[ld_raddr];
+    end
+    // Dilation over the 7 x 7 block neighbourhood, one read per clock.
+    reg        dil_on, dil_rv, dil_rv2;   // read issued / its data in lm_q
+    reg  [3:0] dj; reg [4:0] di;          // target block
+    reg  [2:0] nj, ni;                    // neighbour offset + 3
+    reg  [7:0] dacc;
+    reg        dil_last, dil_last_d;
+    wire signed [5:0] tj = $signed({2'b0, dj}) + $signed({3'b0, nj}) - 6'sd3;
+    wire signed [6:0] ti = $signed({2'b0, di}) + $signed({4'b0, ni}) - 7'sd3;
+    wire       nb_ok = tj >= 0 && tj < 12 && ti >= 0 && ti < 20;
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            lprev <= 0; row_in_blk <= 0; lby <= 0; blk_first <= 1; lwr <= 0; lwr_on <= 0;
+            for (q = 0; q < 20; q = q + 1) blk_max[q] <= 0;
+            lm_raddr <= 0; ld_waddr <= 0; ld_we <= 0; ld_wdata <= 0;
+            dil_on <= 0; dil_rv <= 0; dil_rv2 <= 0; dj <= 0; di <= 0; nj <= 0; ni <= 0; dacc <= 0;
+            dil_last <= 0; dil_last_d <= 0;
+        end else begin
+            ld_we <= 0;
+            if (!vsync_n) begin
+                row_in_blk <= 0; lby <= 0; blk_first <= 1; lwr_on <= 0;
+            end else begin
+                if (lsample) begin
+                    lprev <= gray;
+                    if ((blk_first && sx_now[4:0] == 0) || lval > blk_max[sx_now[9:5]])
+                        blk_max[sx_now[9:5]] <= lval;
+                    if (sx_now == SW-1) begin               // end of a sampled row
+                        if (row_in_blk == 5'd29) begin
+                            row_in_blk <= 0; lwr <= 0; lwr_on <= 1;
+                        end else begin
+                            row_in_blk <= row_in_blk + 5'd1;
+                            blk_first <= 0;
+                        end
+                    end
+                end
+                if (lwr_on) begin                           // 20 writes, then next block row
+                    if (lwr == 5'd19) begin
+                        lwr_on <= 0; blk_first <= 1;
+                        lby <= lby + 4'd1;
+                        if (lby == 4'd11) begin             // frame done: dilate
+                            dil_on <= 1; dj <= 0; di <= 0; nj <= 0; ni <= 0; dacc <= 0;
+                        end
+                    end else lwr <= lwr + 5'd1;
+                end
+            end
+            // dilation: issue reads (lm_q one clock later), accumulate, write
+            dil_rv <= dil_on && nb_ok;
+            dil_rv2 <= dil_rv;
+            dil_last_d <= dil_last;
+            dil_last <= 0;
+            if (dil_on) begin
+                lm_raddr <= {tj[3:0], ti[4:0]};
+                if (ni == 3'd6) begin
+                    ni <= 0;
+                    if (nj == 3'd6) begin nj <= 0; dil_last <= 1; dil_on <= 0; end
+                    else nj <= nj + 3'd1;
+                end else ni <= ni + 3'd1;
+            end
+            if (dil_rv2 && lm_q > dacc) dacc <= lm_q;
+            if (dil_last_d) begin
+                // the last read's data arrives with dil_last_d
+                ld_we <= 1; ld_waddr <= {dj, di};
+                ld_wdata <= (dil_rv2 && lm_q > dacc) ? lm_q : dacc;
+                dacc <= 0;
+                if (di == 5'd19) begin
+                    di <= 0;
+                    if (dj != 4'd11) begin dj <= dj + 4'd1; dil_on <= 1; end
+                end else begin di <= di + 5'd1; dil_on <= 1; end
+            end
+        end
+    end
+    // Threshold for the sample three clocks later (address, RAM, register)
+    wire [10:0] xa = xf + 11'd3;
+    always @(posedge clk) ld_raddr <= {lby, xa[10:6]};
+    reg  [7:0] thr_pix;
+    wire [15:0] tmul = ld_q * 8'd141;
+    wire [7:0]  t_lo = {1'b0, thr_use[7:1]};
+    wire [8:0]  t_hi = thr_use + thr_use[7:2];
+    always @(posedge clk) thr_pix <= LOCAL_THR ? ((tmul[15:8] < t_lo) ? t_lo :
+                                                 ({1'b0, tmul[15:8]} > t_hi) ? t_hi[7:0] : tmul[15:8])
+                                               : thr_use;
+
     // Gap closing (before stage 0): a light gap of one or two samples between
     // dark samples of the same row counts as dark, so printer streaks and
     // thin highlights do not cut a shape into slices. The decision for
@@ -132,7 +243,7 @@ module shape_detector #(
             if (shift) begin
                 e2_v <= e1_v; e2_fg <= e1_fg; e2_g <= e1_g; e2_x <= e1_x;
                 e1_v <= e0_v; e1_fg <= e0_fg; e1_g <= e0_g; e1_x <= e0_x;
-                e0_v <= sample; e0_fg <= sample && gray < thr_use;
+                e0_v <= sample; e0_fg <= sample && gray < thr_pix;
                 e0_g <= gray; e0_x <= sx_now;
                 h1_fg <= e2_v && e2_fg;            // raw (unclosed) history
                 h2_fg <= h1_fg;
