@@ -1,9 +1,9 @@
-candidates: 420 on shapes, 853 clutter
-CVX  shapes: max 1.178  p99 1.127 | clutter: min 1.000 median 1.065
-RHO  shapes: max 0.337  p99 0.321 | clutter: min 0.229 median 0.521
+candidates: 420 on shapes, 863 clutter
+CVX  shapes: max 1.131  p99 1.085 | clutter: min 1.000 median 1.046
+RHO  shapes: max 0.302  p99 0.283 | clutter: min 0.219 median 0.444
 
 == old (A>=600, no filters)
-   false detections in clutter: 16 (of 853 candidates)
+   false detections in clutter: 21 (of 863 candidates)
    correct / placed, n6
    size    circle   ellipse    square      rect  triangle
       6       0/6       0/6       0/6       0/6       0/6
@@ -27,7 +27,7 @@ RHO  shapes: max 0.337  p99 0.321 | clutter: min 0.229 median 0.521
    paper-on-texture shapes correct: 12/12
 
 == A>=150, no filters
-   false detections in clutter: 147 (of 853 candidates)
+   false detections in clutter: 150 (of 863 candidates)
    correct / placed, n6
    size    circle   ellipse    square      rect  triangle
       6       0/6       6/6       0/6       0/6       0/6
@@ -51,7 +51,7 @@ RHO  shapes: max 0.337  p99 0.321 | clutter: min 0.229 median 0.521
    paper-on-texture shapes correct: 12/12
 
 == A>=150, RHO<=0.45
-   false detections in clutter: 41 (of 853 candidates)
+   false detections in clutter: 67 (of 863 candidates)
    correct / placed, n6
    size    circle   ellipse    square      rect  triangle
       6       0/6       6/6       0/6       0/6       0/6
@@ -75,7 +75,7 @@ RHO  shapes: max 0.337  p99 0.321 | clutter: min 0.229 median 0.521
    paper-on-texture shapes correct: 12/12
 
 == A>=150, ASP<=3.5
-   false detections in clutter: 125 (of 853 candidates)
+   false detections in clutter: 126 (of 863 candidates)
    correct / placed, n6
    size    circle   ellipse    square      rect  triangle
       6       0/6       6/6       0/6       0/6       0/6
@@ -99,7 +99,7 @@ RHO  shapes: max 0.337  p99 0.321 | clutter: min 0.229 median 0.521
    paper-on-texture shapes correct: 12/12
 
 == A>=150, SYM<=4/64
-   false detections in clutter: 91 (of 853 candidates)
+   false detections in clutter: 91 (of 863 candidates)
    correct / placed, n6
    size    circle   ellipse    square      rect  triangle
       6       0/6       5/6       0/6       0/6       0/6
@@ -123,7 +123,7 @@ RHO  shapes: max 0.337  p99 0.321 | clutter: min 0.229 median 0.521
    paper-on-texture shapes correct: 12/12
 
 == A>=150, CVX<=1.5
-   false detections in clutter: 147 (of 853 candidates)
+   false detections in clutter: 150 (of 863 candidates)
    correct / placed, n6
    size    circle   ellipse    square      rect  triangle
       6       0/6       6/6       0/6       0/6       0/6
@@ -147,7 +147,7 @@ RHO  shapes: max 0.337  p99 0.321 | clutter: min 0.229 median 0.521
    paper-on-texture shapes correct: 12/12
 
 == A>=150, all: CVX<=1.5 RHO<=0.45 ASP<=3.5 SYM<=4/64
-   false detections in clutter: 11 (of 853 candidates)
+   false detections in clutter: 26 (of 863 candidates)
    correct / placed, n6
    size    circle   ellipse    square      rect  triangle
       6       0/6       5/6       0/6       0/6       0/6
@@ -171,7 +171,7 @@ RHO  shapes: max 0.337  p99 0.321 | clutter: min 0.229 median 0.521
    paper-on-texture shapes correct: 12/12
 
 == A>=150, all: CVX<=1.5 RHO<=0.40 ASP<=3.5 SYM<=3/64
-   false detections in clutter: 6 (of 853 candidates)
+   false detections in clutter: 12 (of 863 candidates)
    correct / placed, n6
    size    circle   ellipse    square      rect  triangle
       6       0/6       4/6       0/6       0/6       0/6
@@ -195,7 +195,7 @@ RHO  shapes: max 0.337  p99 0.321 | clutter: min 0.229 median 0.521
    paper-on-texture shapes correct: 12/12
 
 == A>=200, all: CVX<=1.5 RHO<=0.45 ASP<=3.5 SYM<=4/64
-   false detections in clutter: 11 (of 853 candidates)
+   false detections in clutter: 22 (of 863 candidates)
    correct / placed, n6
    size    circle   ellipse    square      rect  triangle
       6       0/6       0/6       0/6       0/6       0/6
@@ -219,7 +219,7 @@ RHO  shapes: max 0.337  p99 0.321 | clutter: min 0.229 median 0.521
    paper-on-texture shapes correct: 12/12
 
 == HARDWARE rule set (shape_ccl_model.classify)
-   false detections in clutter: 11 (of 853 candidates)
+   false detections in clutter: 65 (of 863 candidates)
    correct / placed, n6
    size    circle   ellipse    square      rect  triangle
       6       0/6       5/6       0/6       0/6       0/6

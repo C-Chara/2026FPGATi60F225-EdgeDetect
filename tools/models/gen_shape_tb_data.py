@@ -88,6 +88,33 @@ def study_case(name):
         shapes = [st.make_shapes('circle', 30, 230, 150, 0), st.make_shapes('square', 22, 400, 150, r(20)),
                   st.make_shapes('triangle', 26, 320, 230, r(10))]
         return st.render(shapes, 8.0, False, rng, background=bg)
+    if name == 'streaks':        # the board's Page 4: dark gray print with light streaks
+        Y, X = np.mgrid[0:360, 0:640]
+        img = np.full((360, 640), 215.0)
+        ink = ((X - 220) ** 2 + (Y - 180) ** 2 <= 48 ** 2) | \
+              ((np.abs(X - 430) <= 52) & (np.abs(Y - 180) <= 52))
+        img[ink] = 75.0                              # gamma-encoded dark gray
+        for sx, w in ((190, 1), (205, 2), (238, 1), (400, 2), (425, 1), (452, 2)):
+            img[ink & (X >= sx) & (X < sx + w)] = 160.0   # streaks above threshold
+        k = np.array([1, 2, 1], float) / 4
+        img = np.apply_along_axis(lambda q: np.convolve(np.pad(q, 1, mode='edge'), k, 'valid'), 0, img)
+        img += rng.normal(0, 4.0, img.shape)
+        return np.clip(np.round(img), 0, 255).astype(int)
+    if name == 'blotchy':        # uneven print: glare patches and holes inside the ink
+        Y, X = np.mgrid[0:360, 0:640]
+        img = np.full((360, 640), 210.0)
+        ink = ((X - 170) ** 2 + (Y - 180) ** 2 <= 50 ** 2) | \
+              ((np.abs(X - 360) <= 50) & (np.abs(Y - 180) <= 50)) | \
+              ((Y - 120) * 1.0 > -1.6 * np.abs(X - 540) + 0) & (Y < 240) & (Y > 120 - 0) & \
+              (np.abs(X - 540) <= (Y - 120) * 0.58)
+        img[ink] = 85.0
+        g = np.random.default_rng(31)
+        for _ in range(40):                          # glare / worn toner spots
+            cx, cy = g.uniform(100, 600), g.uniform(110, 250)
+            rr = g.uniform(2, 6)
+            img[ink & ((X - cx) ** 2 + (Y - cy) ** 2 <= rr * rr)] = 170.0
+        img += rng.normal(0, 6.0, img.shape)
+        return np.clip(np.round(img), 0, 255).astype(int)
     raise KeyError(name)
 
 

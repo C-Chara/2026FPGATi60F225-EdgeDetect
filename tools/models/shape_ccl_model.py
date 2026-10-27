@@ -1,7 +1,8 @@
 """Bit-exact reference model of src/edge/shape_ccl.v + shape_classify.v.
 
 Input: 640 x 360 gray samples (every second pixel of every second row).
-Foreground: gray < threshold. One raster pass labels 4-connected regions
+Foreground: gray < threshold, light gaps of 1-2 samples in a row closed;
+light gaps between two runs of the same object in a row count as the object. One raster pass labels 4-connected regions
 (a run inherits the label of the first run above it that it touches; when it
 touches a second, different label the object is marked as merged and is not
 classified). Per label: area, sums of x, y, x^2, y^2, xy, bounding box and
@@ -35,11 +36,13 @@ def threshold_from_sum(gray_sum):
 
 
 MAX_PAIRS = 1023
-OUTER = 2                  # surrounding sample: 2 samples left of each run start
+OUTER = 4                  # surrounding sample: 4 samples left of the object's
+                           # first run in each row (its left outer edge)
 # Clutter rejection (tools/models/shape_robust_study.py, docs/sim_data):
 RHO_NUM, RHO_DEN = 13, 20  # mean inside <= 0.65 x mean of the surrounding samples
                            # (0.45 rejected real ink: the camera gray is gamma-encoded)
-CVX_NUM, CVX_DEN = 3, 2    # runs + top edges <= 1.5 x (width + height)
+# (runs + top edges) / (width + height) is measured for the readout only: holes
+# and streaks in real prints raise it, and alone it rejected no clutter.
 ASP_MAX = 740              # aspect <= ~3.5: Qn * 1024 <= Qd * 740
 SYM_SHIFT = 4              # circle/ellipse/square/rect: centroid within 1/16
                            # of the box size from the box centre
@@ -61,12 +64,17 @@ def label_frame(gray, thr):
     lb_prev = [0] * W        # run id + 1 of the run above (0 = background)
     prt = [0] * 330          # previous-row run id -> label
     for y in range(H):
+        raw = [gray[y][x] < thr for x in range(W)] + [False, False]
+        # gap closing: a light gap of 1 or 2 samples between dark samples is dark
+        fgrow = [raw[x] or (x >= 1 and raw[x - 1] and (raw[x + 1] or raw[x + 2])) or
+                 (x >= 2 and raw[x - 2] and raw[x + 1]) for x in range(W)]
         lb_cur = [0] * W
         crt = [0] * 330
         run_id = 0
         in_run = False
+        prev_lab, prev_x1, prev_n = 0, 0, 0   # previous run in this row
         for x in range(W + 1):
-            fg = x < W and gray[y][x] < thr
+            fg = x < W and fgrow[x]
             up = 0
             if x < W and lb_prev[x]:
                 up = prt[lb_prev[x] - 1]
@@ -98,12 +106,22 @@ def label_frame(gray, thr):
                         lab = next_label
                         next_label += 1
                         labels[lab] = dict(A=0, Sx=0, Sy=0, Sxx=0, Syy=0, Sxy=0,
-                                           G=0, T=0, R=0, SO=0, NO=0,
+                                           G=0, T=0, R=0, SO=0, NO=0, LR=-1, AD=0,
                                            x0=x0, x1=x1, y0=y, y1=y, flags=0)
                 if lab:
                     e = labels[lab]
                     if x0 == 0 or x1 == W - 1 or y == 0 or y == H - 1:
                         e['flags'] |= 1           # touches the border
+                    e['AD'] += n                  # dark samples (for the contrast)
+                    gap = range(prev_x1 + 1, x0)
+                    if lab == prev_lab and 2 * len(gap) <= prev_n + n:
+                        # hole filling: a light gap since the object's previous
+                        # run in this row, no wider than the runs around it,
+                        # belongs to the object (glare, streaks; not the
+                        # inside of a ring or a letter O)
+                        n += len(gap)
+                        sx += sum(gap)
+                        sxx += sum(g * g for g in gap)
                     e['A'] += n
                     e['Sx'] += sx
                     e['Sy'] += n * y
@@ -113,16 +131,20 @@ def label_frame(gray, thr):
                     e['G'] += sg
                     e['T'] += tops
                     e['R'] += 1
-                    # surrounding brightness: the sample OUTER left of the run
-                    if x0 >= OUTER:
+                    # surrounding brightness: the sample OUTER left of the
+                    # object's first run in this row (later runs in the row
+                    # start inside the object, after a hole or streak)
+                    if e['LR'] != y and x0 >= OUTER:
                         e['SO'] += gray[y][x0 - OUTER]
                         e['NO'] += 1
+                    e['LR'] = y
                     e['x0'] = min(e['x0'], x0)
                     e['x1'] = max(e['x1'], x1)
                     e['y0'] = min(e['y0'], y)
                     e['y1'] = max(e['y1'], y)
                 crt[run_id] = lab
                 run_id += 1
+                prev_lab, prev_x1, prev_n = lab, x1, x1 - x0 + 1
         lb_prev, prt = lb_cur, crt
     return labels, pairs
 
@@ -145,7 +167,7 @@ def resolve(labels, pairs):
         p = parent[lab]
         if p != lab and lab in labels and p in labels:
             c, e = labels[lab], labels[p]
-            for k in ('A', 'Sx', 'Sy', 'Sxx', 'Syy', 'Sxy', 'G', 'T', 'R', 'SO', 'NO'):
+            for k in ('A', 'Sx', 'Sy', 'Sxx', 'Syy', 'Sxy', 'G', 'T', 'R', 'SO', 'NO', 'AD'):
                 e[k] += c[k]
             e['x0'] = min(e['x0'], c['x0'])
             e['x1'] = max(e['x1'], c['x1'])
@@ -156,14 +178,10 @@ def resolve(labels, pairs):
 
 
 def clutter_ok(e):
-    """Ink on paper: dark against bright surroundings, convex without holes."""
-    w = e['x1'] - e['x0'] + 1
-    h = e['y1'] - e['y0'] + 1
+    """Ink on paper: dark against bright surroundings."""
     if e['NO'] == 0:
         return False
-    if RHO_DEN * e['G'] * e['NO'] > RHO_NUM * e['SO'] * e['A']:
-        return False
-    return CVX_DEN * (e['R'] + e['T']) <= CVX_NUM * (w + h)
+    return RHO_DEN * e['G'] * e['NO'] <= RHO_NUM * e['SO'] * e['AD']
 
 
 def classify(e):
