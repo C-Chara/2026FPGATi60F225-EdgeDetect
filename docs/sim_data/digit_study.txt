@@ -1,0 +1,5 @@
+grid 7x9: correct / placed (wrong)
+  arialbd      h=20/28/40/60: 26/27(0) 26/27(0) 27/27(0) 27/27(0)
+  arial        h=20/28/40/60:  5/27(0) 14/27(1) 22/27(1) 21/27(1)
+  bahnschrift  h=20/28/40/60: 14/27(1) 15/27(0) 16/27(1) 16/27(1)
+grid 7x9: false digits in 12 clutter scenes: 4

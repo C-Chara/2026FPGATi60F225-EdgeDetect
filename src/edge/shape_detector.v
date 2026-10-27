@@ -29,7 +29,9 @@ module shape_detector #(
     parameter integer MAX_OBJECTS = 32,
     parameter integer A_MIN = 150,
     parameter integer A_MAX = 100000,
-    parameter LOCAL_THR = 1'b1           // 0: one threshold for the whole frame
+    parameter LOCAL_THR = 1'b1,          // 0: one threshold for the whole frame
+    parameter integer A_DIG = 60,        // digit candidates may be smaller
+    parameter integer MAX_DIGITS = 4
 )(
     input  wire        clk,
     input  wire        rst_n,
@@ -47,7 +49,16 @@ module shape_detector #(
     // 4 off-centre, 5 fill, 6 triangle symmetric; 0 = accepted)
     output reg  [17:0] dbg_area,
     output reg  [9:0]  dbg_rho, dbg_cvx, dbg_j,
-    output reg  [6:0]  dbg_fill, dbg_why
+    output reg  [6:0]  dbg_fill, dbg_why,
+    // Digit candidates of the last analysis (objects that are no shape, ink
+    // on paper, 1.25 <= h/w <= 6, h >= 12): {x0, x1, y0, y1}, raster order.
+    output reg  [2:0]  dig_count,
+    output reg  [MAX_DIGITS*38-1:0] dig_data,
+    // The sample stream with its local-threshold decision, every frame
+    output wire        smp_v,
+    output wire [9:0]  smp_x,
+    output wire [8:0]  smp_y,
+    output wire        smp_dark
 );
     localparam integer SW = 640, SH = 360;
     localparam [2:0] CLS_NONE = 3'd0, CLS_CIRCLE = 3'd1, CLS_ELLIPSE = 3'd2,
@@ -218,6 +229,11 @@ module shape_detector #(
     always @(posedge clk) thr_pix <= LOCAL_THR ? ((tmul[15:8] < t_lo) ? t_lo :
                                                  ({1'b0, tmul[15:8]} > t_hi) ? t_hi[7:0] : tmul[15:8])
                                                : thr_use;
+
+    assign smp_v = lsample;
+    assign smp_x = sx_now;
+    assign smp_y = yf[9:1];
+    assign smp_dark = gray < thr_pix;
 
     // Gap closing (before stage 0): a light gap of one or two samples between
     // dark samples of the same row counts as dark, so printer streaks and
@@ -522,6 +538,22 @@ module shape_detector #(
     reg [9:0]   pdbg_rho, pdbg_cvx, pdbg_j;
     reg [6:0]   pdbg_fill, pdbg_why;
     wire        band_e = j2 <= K_ELLIPSE_MAX;
+    // Class of the object in classification (shapes need A >= A_MIN)
+    wire [2:0]  cls_calc =
+        (cA < A_MIN || cNO == 0 || !contrast_ok || !aspect_ok) ? CLS_NONE :
+        (j2 <= K_ELLIPSE_MAX) ? ((!centred || !(rounder ? fill_c : fill_e)) ? CLS_NONE :
+                                 rounder ? CLS_CIRCLE : CLS_ELLIPSE) :
+        (j2 >= K_RECT_MIN && j2 <= K_RECT_MAX) ? (!centred ? CLS_NONE :
+                                 rounder ? CLS_SQUARE : CLS_RECT) :
+        (j2 >= K_TRI_MIN && j2 <= K_TRI_MAX && tri_asym && fill_t) ? CLS_TRIANGLE : CLS_NONE;
+    // Digit candidate box: height >= 12, 1.25 <= h/w <= 6
+    wire [10:0] cb_w = cbox[27:18] - cbox[37:28] + 11'd1;
+    wire [10:0] cb_h = cbox[8:0] - cbox[17:9] + 11'd1;
+    wire        dig_shape = cb_h >= 11'd12 && {cb_h, 2'b0} >= ({2'b0, cb_w} << 2) + cb_w &&
+                            cb_h <= ({cb_w, 2'b0} + {1'b0, cb_w, 1'b0});
+    reg         dig_ok;
+    reg  [2:0]  pend_dcount;
+    reg  [MAX_DIGITS*38-1:0] pend_dig;
     wire        band_r = j2 >= K_RECT_MIN && j2 <= K_RECT_MAX;
     wire        band_t = j2 >= K_TRI_MIN && j2 <= K_TRI_MAX;
     wire [6:0]  why = {band_t && !tri_asym,
@@ -561,6 +593,7 @@ module shape_detector #(
             cG <= 0; cSO <= 0; cNO <= 0; t_g <= 0; t_s <= 0; t_wh <= 0; fill <= 0;
             c_cvx_ok <= 0; c_rt <= 0; c_whs <= 0; rho100 <= 0; cvx100 <= 0; dbg_best <= 0;
             pdbg_area <= 0; pdbg_rho <= 0; pdbg_cvx <= 0; pdbg_j <= 0; pdbg_fill <= 0; pdbg_why <= 0;
+            dig_ok <= 0; pend_dcount <= 0; pend_dig <= 0; dig_count <= 0; dig_data <= 0;
             dbg_area <= 0; dbg_rho <= 0; dbg_cvx <= 0; dbg_j <= 0; dbg_fill <= 0; dbg_why <= 0;
             s1_gray <= 0; s2_gray <= 0; g_m1 <= 0; g_m2 <= 0; g_m3 <= 0; g_m4 <= 0;
             run_sg <= 0; run_top <= 0; run_so <= 0; run_no <= 0;
@@ -583,6 +616,7 @@ module shape_detector #(
                     post_done <= 0;
                     pidx <= 0;
                     pend_count <= 0;
+                    pend_dcount <= 0;
                     dbg_best <= 0;
                     pdbg_area <= 0; pdbg_rho <= 0; pdbg_cvx <= 0;
                     pdbg_j <= 0; pdbg_fill <= 0; pdbg_why <= 0;
@@ -809,7 +843,7 @@ module shape_detector #(
                 end
                 P_C_CHK: begin
                     if (parent_q != pidx[9:0] || stats_q[OFL] ||
-                        stats_q[OA +: WA] < A_MIN || stats_q[OA +: WA] > A_MAX) begin
+                        stats_q[OA +: WA] < A_DIG || stats_q[OA +: WA] > A_MAX) begin
                         pidx <= pidx + 11'd1;
                         pstate <= P_C_RD;
                     end else begin
@@ -830,7 +864,7 @@ module shape_detector #(
                         cAD  <= stats_q[OAD +: 18];
                         cbox <= {3'd0, stats_q[OX0 +: 10], stats_q[OX1 +: 10],
                                  stats_q[OY0 +: 9], stats_q[OY1 +: 9]};
-                        cstep <= 0; cwait <= 0; cls <= CLS_NONE;
+                        cstep <= 0; cwait <= 0; cls <= CLS_NONE; dig_ok <= 0;
                         pstate <= P_C_MATH;
                     end
                 end
@@ -884,15 +918,8 @@ module shape_detector #(
                                 pdbg_fill <= (fill > 64'd99) ? 7'd99 : fill[6:0];
                                 pdbg_why <= why;
                             end
-                            if (cNO == 0 || !contrast_ok || !aspect_ok) cls <= CLS_NONE;
-                            else if (j2 <= K_ELLIPSE_MAX)
-                                cls <= (!centred || !(rounder ? fill_c : fill_e)) ? CLS_NONE :
-                                       rounder ? CLS_CIRCLE : CLS_ELLIPSE;
-                            else if (j2 >= K_RECT_MIN && j2 <= K_RECT_MAX)
-                                cls <= !centred ? CLS_NONE : rounder ? CLS_SQUARE : CLS_RECT;
-                            else if (j2 >= K_TRI_MIN && j2 <= K_TRI_MAX && tri_asym && fill_t)
-                                cls <= CLS_TRIANGLE;
-                            else cls <= CLS_NONE;
+                            cls <= cls_calc;
+                            dig_ok <= cls_calc == CLS_NONE && cNO != 0 && contrast_ok && dig_shape;
                             pstate <= P_C_STORE;
                         end
                     end else if (!alu_busy) begin
@@ -934,12 +961,19 @@ module shape_detector #(
                         pend_data[pend_count*41 +: 41] <= {cls, cbox[37:0]};
                         pend_count <= pend_count + 6'd1;
                     end
+                    if (dig_ok && pend_dcount < MAX_DIGITS) begin
+                        pend_dig[pend_dcount*38 +: 38] <= cbox[37:0];
+                        pend_dcount <= pend_dcount + 3'd1;
+                    end
+                    dig_ok <= 0;
                     pidx <= pidx + 11'd1;
                     pstate <= P_C_RD;
                 end
                 P_DONE: begin
                     obj_count <= pend_count;
                     obj_strobe <= 1;
+                    dig_count <= pend_dcount;
+                    dig_data <= pend_dig;
                     dbg_area <= pdbg_area; dbg_rho <= pdbg_rho; dbg_cvx <= pdbg_cvx;
                     dbg_j <= pdbg_j; dbg_fill <= pdbg_fill; dbg_why <= pdbg_why;
                     obj_data <= pend_data;

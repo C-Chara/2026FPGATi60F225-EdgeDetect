@@ -1551,6 +1551,7 @@ module example_top
 	localparam SHAPE_DETECTOR = 1'b1;
 	localparam SHAPE_TRACKER = 1'b1;
 	localparam SHAPE_DEBUG_OSD = 1'b1;
+	localparam SHAPE_DIGITS = 1'b1;
 	wire [23:0] shape_rgb;
 	wire shape_vs, shape_hs, shape_de;
 	generate if (SHAPE_DETECTOR) begin: ccl_shapes
@@ -1560,13 +1561,20 @@ module example_top
 		wire [17:0] dbg_area;
 		wire [9:0] dbg_rho, dbg_cvx, dbg_j;
 		wire [6:0] dbg_fill, dbg_why;
+		wire [2:0] dig_count;
+		wire [4*38-1:0] dig_data;
+		wire smp_v, smp_dark;
+		wire [9:0] smp_x;
+		wire [8:0] smp_y;
 		shape_detector u_shape_detector (
 			.clk(clk_pixel), .rst_n(rstn_pixel), .vsync_n(filtered_vs),
 			.de(filtered_valid), .gray(filtered_pixel),
 			.obj_count(detected_count), .obj_data(detected_objects), .threshold(),
 			.obj_strobe(detected_strobe),
 			.dbg_area(dbg_area), .dbg_rho(dbg_rho), .dbg_cvx(dbg_cvx), .dbg_j(dbg_j),
-			.dbg_fill(dbg_fill), .dbg_why(dbg_why)
+			.dbg_fill(dbg_fill), .dbg_why(dbg_why),
+			.dig_count(dig_count), .dig_data(dig_data),
+			.smp_v(smp_v), .smp_x(smp_x), .smp_y(smp_y), .smp_dark(smp_dark)
 		);
 		// Recognition readout (DET/TRK/ARE/RHO/PER/MOM/FIL/ERR) under the
 		// status text while recognition is on. SHAPE_DEBUG_OSD = 0 hides it.
@@ -1595,6 +1603,8 @@ module example_top
 			assign shape_count = detected_count;
 			assign shape_objects = detected_objects;
 		end
+		wire ov_vs, ov_hs, ov_de;
+		wire [23:0] ov_rgb;
 		// Three-clock overlay; the sync signals are delayed with it.
 		shape_overlay #(.X_OFF(ALIGN_PIXEL_DELAY), .Y_OFF(ALIGN_ROW_DELAY - 1)) u_shape_overlay (
 			.clk(clk_pixel), .rst_n(rstn_pixel), .enable(recognition_on),
@@ -1602,8 +1612,34 @@ module example_top
 			.rgb_in(shape_osd_rgb),
 			.edge_in(final_edge && aligned_rgb_valid),
 			.obj_count(shape_count), .obj_data(shape_objects),
-			.vs_out(shape_vs), .hs_out(shape_hs), .de_out(shape_de), .rgb_out(shape_rgb)
+			.vs_out(ov_vs), .hs_out(ov_hs), .de_out(ov_de), .rgb_out(ov_rgb)
 		);
+		// Printed digits 1-9 (digit_reader): objects that are no shape are
+		// read on a 7 x 9 grid and matched with Arial Bold templates; shown
+		// with an orange outline and the digit. A separate branch: the shape
+		// results do not depend on it. SHAPE_DIGITS = 0 removes it.
+		if (SHAPE_DIGITS) begin: digits
+			wire [2:0] slot_count;
+			wire [4*38-1:0] slot_box;
+			wire [4*4-1:0] slot_digit;
+			digit_reader u_digit_reader (
+				.clk(clk_pixel), .rst_n(rstn_pixel), .vsync_n(filtered_vs),
+				.smp_v(smp_v), .smp_x(smp_x), .smp_y(smp_y), .smp_dark(smp_dark),
+				.cand_strobe(detected_strobe), .cand_count(dig_count), .cand_data(dig_data),
+				.slot_count(slot_count), .slot_box(slot_box), .slot_digit(slot_digit)
+			);
+			digit_overlay #(.X_OFF(ALIGN_PIXEL_DELAY), .Y_OFF(ALIGN_ROW_DELAY - 1)) u_digit_overlay (
+				.clk(clk_pixel), .rst_n(rstn_pixel), .enable(recognition_on),
+				.vs_in(ov_vs), .hs_in(ov_hs), .de_in(ov_de), .rgb_in(ov_rgb),
+				.slot_count(slot_count), .slot_box(slot_box), .slot_digit(slot_digit),
+				.vs_out(shape_vs), .hs_out(shape_hs), .de_out(shape_de), .rgb_out(shape_rgb)
+			);
+		end else begin: no_digits
+			assign shape_vs = ov_vs;
+			assign shape_hs = ov_hs;
+			assign shape_de = ov_de;
+			assign shape_rgb = ov_rgb;
+		end
 	end else begin: geometry_shapes
 		// Recognize one near-frontal circular outline from the stable edge map.
 		// Search and annotation use separate frame banks and do not stall video.
