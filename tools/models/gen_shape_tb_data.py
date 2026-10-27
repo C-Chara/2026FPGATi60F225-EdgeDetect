@@ -100,6 +100,22 @@ def study_case(name):
         img = np.apply_along_axis(lambda q: np.convolve(np.pad(q, 1, mode='edge'), k, 'valid'), 0, img)
         img += rng.normal(0, 4.0, img.shape)
         return np.clip(np.round(img), 0, 255).astype(int)
+    if name == 'vignette':       # lens falloff, shapes near the edges of the picture
+        import shape_robust_study as st
+        Y, X = np.mgrid[0:360, 0:640]
+        paper = X > 8                                # paper fills the view
+        img = np.where(paper, 215.0, 55.0)
+        ink = ((X - 95) ** 2 + (Y - 180) ** 2 <= 42 ** 2) | \
+              st.make_shapes('square', 42, 540, 175, r(12))(X + 0.5, Y + 0.5) | \
+              ((X - 320) ** 2 + (Y - 180) ** 2 <= 42 ** 2)
+        img[ink] = 70.0
+        rr = ((X - 320) / 320.0) ** 2 + ((Y - 180) / 180.0) ** 2   # 1 at the edge centres
+        img = img * (1 - 0.25 * rr) * (0.45 + 0.55 * X / 640.0)   # falloff + side light
+        k = np.array([1, 2, 1], float) / 4
+        for ax in (0, 1):
+            img = np.apply_along_axis(lambda q: np.convolve(np.pad(q, 1, mode='edge'), k, 'valid'), ax, img)
+        img += rng.normal(0, 5.0, img.shape)
+        return np.clip(np.round(st.median3(img)), 0, 255).astype(int)
     if name == 'blotchy':        # uneven print: glare patches and holes inside the ink
         Y, X = np.mgrid[0:360, 0:640]
         img = np.full((360, 640), 210.0)
