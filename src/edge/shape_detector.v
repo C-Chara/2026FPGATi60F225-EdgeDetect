@@ -79,34 +79,34 @@ module shape_detector #(
     reg        s1_v, s2_v, s1_fg, s2_fg, s1_last, s2_last;
     reg [9:0]  s1_x, s2_x;
     reg [8:0]  lb_q, s2_lb;
-    reg [7:0]  run_q;
+    reg [9:0]  run_q;
     reg        row_bank;
     reg [8:0]  run_id;
     reg [8:0]  srow;
     reg [7:0]  thr_use;
 
     reg [8:0]  lb_ram [0:SW-1];
-    reg [7:0]  run_ram [0:1023];
+    reg [9:0]  run_ram [0:1023];
     // run_ram write (label of a finished run of the current row)
     reg        runw_en;
     reg [9:0]  runw_addr;
-    reg [7:0]  runw_data;
+    reg [9:0]  runw_data;
     always @(posedge clk) begin
         if (sample) lb_q <= lb_ram[sx_now];
         if (s2_v) lb_ram[s2_x] <= s2_fg ? run_id + 9'd1 : 9'd0;
         run_q <= run_ram[{!row_bank, lb_q - 9'd1}];
         if (runw_en) run_ram[runw_addr] <= runw_data;
     end
-    wire [7:0] up_label = (s2_lb != 0 && srow != 0) ? run_q : 8'd0;
+    wire [9:0] up_label = (s2_lb != 0 && srow != 0) ? run_q : 10'd0;
 
     reg        in_run;
     reg [9:0]  run_x0;
-    reg [7:0]  run_label;
+    reg [9:0]  run_label;
     reg [9:0]  run_n;
     reg [18:0] run_sx;
     reg [27:0] run_sxx;
     reg [18:0] sq;             // x^2 of the stage-2 sample
-    reg [15:0] last_pair;
+    reg [19:0] last_pair;
     reg        rowend_1, rowend_2;
 
     // Run end event and statistics update
@@ -114,16 +114,16 @@ module shape_detector #(
     reg [9:0]  ev_x0, ev_x1, ev_n;
     reg [18:0] ev_sx;
     reg [27:0] ev_sxx;
-    reg [7:0]  ev_label;
+    reg [9:0]  ev_label;
     reg [8:0]  ev_y;
     reg        up_v, up_new;
     reg [9:0]  up_x0, up_x1, up_n;
     reg [18:0] up_sx;
     reg [27:0] up_sxx;
-    reg [7:0]  up_lab;
+    reg [9:0]  up_lab;
     reg [8:0]  up_y;
-    reg [8:0]  next_label;     // next free label, 256 = full
-    reg [8:0]  npairs;
+    reg [10:0] next_label;     // next free label, 1024 = full
+    reg [10:0] npairs;
     reg [25:0] gray_sum;
 
     // ------------------------------------------------------------------
@@ -134,37 +134,37 @@ module shape_detector #(
                      P_C_MATH = 14, P_C_STORE = 15, P_DONE = 16, P_F_GAP = 17;
     reg [4:0]  pstate;
     reg        processing, post_done;
-    reg [8:0]  pidx;
-    reg [7:0]  fa, fb, fcur, ra, fpar;
+    reg [10:0] pidx;
+    reg [9:0]  fa, fb, fcur, ra, fpar;
     reg        find_second;
     reg [SWID-1:0] child;
 
     // RAMs with combinational read address, registered data (valid next clock)
-    reg  [SWID-1:0] stats_ram [0:255];
+    reg  [SWID-1:0] stats_ram [0:1023];
     reg  [SWID-1:0] stats_q;
     reg             stats_we;
-    reg  [7:0]      stats_waddr;
+    reg  [9:0]      stats_waddr;
     reg  [SWID-1:0] stats_wdata;
-    wire [7:0]      stats_raddr = scanning ? ev_label :
-                                  (pstate == P_F_RDP) ? fpar : pidx[7:0];
+    wire [9:0]      stats_raddr = scanning ? ev_label :
+                                  (pstate == P_F_RDP) ? fpar : pidx[9:0];
     always @(posedge clk) begin
         stats_q <= stats_ram[stats_raddr];
         if (stats_we) stats_ram[stats_waddr] <= stats_wdata;
     end
-    reg  [15:0] pair_ram [0:255];
-    reg  [15:0] pair_q;
+    reg  [19:0] pair_ram [0:1023];
+    reg  [19:0] pair_q;
     reg         pair_we;
-    reg  [7:0]  pair_waddr;
-    reg  [15:0] pair_wdata;
+    reg  [9:0]  pair_waddr;
+    reg  [19:0] pair_wdata;
     always @(posedge clk) begin
-        pair_q <= pair_ram[pidx[7:0]];
+        pair_q <= pair_ram[pidx[9:0]];
         if (pair_we) pair_ram[pair_waddr] <= pair_wdata;
     end
-    reg  [7:0] parent_ram [0:255];
-    reg  [7:0] parent_q;
+    reg  [9:0] parent_ram [0:1023];
+    reg  [9:0] parent_q;
     reg        parent_we;
-    reg  [7:0] parent_waddr, parent_wdata;
-    wire [7:0] parent_raddr = (pstate == P_U_FIND) ? fcur : pidx[7:0];
+    reg  [9:0] parent_waddr, parent_wdata;
+    wire [9:0] parent_raddr = (pstate == P_U_FIND) ? fcur : pidx[9:0];
     always @(posedge clk) begin
         parent_q <= parent_ram[parent_raddr];
         if (parent_we) parent_ram[parent_waddr] <= parent_wdata;
@@ -297,7 +297,7 @@ module shape_detector #(
             ev_label <= 0; ev_y <= 0;
             up_v <= 0; up_new <= 0; up_x0 <= 0; up_x1 <= 0; up_n <= 0; up_sx <= 0;
             up_sxx <= 0; up_lab <= 0; up_y <= 0;
-            next_label <= 9'd1; npairs <= 0; gray_sum <= 0;
+            next_label <= 11'd1; npairs <= 0; gray_sum <= 0;
             runw_en <= 0; runw_addr <= 0; runw_data <= 0;
             stats_we <= 0; stats_waddr <= 0; stats_wdata <= 0;
             pair_we <= 0; pair_waddr <= 0; pair_wdata <= 0;
@@ -330,7 +330,7 @@ module shape_detector #(
                     processing <= 0;
                     scanning <= 1;
                     thr_use <= threshold;
-                    next_label <= 9'd1; npairs <= 0; gray_sum <= 0; last_pair <= 0;
+                    next_label <= 11'd1; npairs <= 0; gray_sum <= 0; last_pair <= 0;
                     row_bank <= 0; run_id <= 0; srow <= 0; in_run <= 0; sq <= 0;
                 end
             end
@@ -365,11 +365,11 @@ module shape_detector #(
                             if (run_label == 0) run_label <= up_label;
                             else if (up_label != run_label && {run_label, up_label} != last_pair) begin
                                 last_pair <= {run_label, up_label};
-                                if (npairs < 9'd256) begin
+                                if (npairs < 11'd1024) begin
                                     pair_we <= 1;
-                                    pair_waddr <= npairs[7:0];
+                                    pair_waddr <= npairs[9:0];
                                     pair_wdata <= {run_label, up_label};
-                                    npairs <= npairs + 9'd1;
+                                    npairs <= npairs + 11'd1;
                                 end
                             end
                         end
@@ -410,10 +410,10 @@ module shape_detector #(
                 if (ev_label != 0) begin
                     up_lab <= ev_label; up_new <= 0;
                     runw_data <= ev_label;
-                end else if (next_label <= 9'd255) begin
-                    up_lab <= next_label[7:0]; up_new <= 1;
-                    runw_data <= next_label[7:0];
-                    next_label <= next_label + 9'd1;
+                end else if (next_label <= 11'd1023) begin
+                    up_lab <= next_label[9:0]; up_new <= 1;
+                    runw_data <= next_label[9:0];
+                    next_label <= next_label + 11'd1;
                 end else begin
                     up_lab <= 0; up_new <= 0;
                     runw_data <= 0;
@@ -439,20 +439,20 @@ module shape_detector #(
             case (pstate)
                 P_IDLE: ;
                 P_PINIT: begin
-                    parent_we <= 1; parent_waddr <= pidx[7:0]; parent_wdata <= pidx[7:0];
-                    if (pidx == 9'd255) begin pidx <= 0; pstate <= P_U_RD; end
-                    else pidx <= pidx + 9'd1;
+                    parent_we <= 1; parent_waddr <= pidx[9:0]; parent_wdata <= pidx[9:0];
+                    if (pidx == 11'd1023) begin pidx <= 0; pstate <= P_U_RD; end
+                    else pidx <= pidx + 11'd1;
                 end
                 // union of the recorded pairs
                 P_U_RD: begin
                     if (pidx >= npairs) begin
-                        pidx <= next_label - 9'd1;
+                        pidx <= next_label - 11'd1;
                         pstate <= P_F_RD;
                     end else pstate <= P_U_GOT;          // pair_q valid next clock
                 end
                 P_U_GOT: begin
-                    fa <= pair_q[15:8]; fb <= pair_q[7:0];
-                    fcur <= pair_q[15:8]; find_second <= 0;
+                    fa <= pair_q[19:10]; fb <= pair_q[9:0];
+                    fcur <= pair_q[19:10]; find_second <= 0;
                     pstate <= P_U_FIND;
                 end
                 P_U_FIND: pstate <= P_U_FCHK;           // parent_q of fcur next clock
@@ -471,18 +471,18 @@ module shape_detector #(
                             parent_waddr <= (ra > fcur) ? ra : fcur;
                             parent_wdata <= (ra > fcur) ? fcur : ra;
                         end
-                        pidx <= pidx + 9'd1;
+                        pidx <= pidx + 11'd1;
                         pstate <= P_U_RD;
                     end
                 end
                 // fold every non-root label into its parent, highest first
                 P_F_RD: begin
-                    if (pidx == 0) begin pidx <= 9'd1; pstate <= P_C_RD; end
+                    if (pidx == 0) begin pidx <= 11'd1; pstate <= P_C_RD; end
                     else pstate <= P_F_CHK;              // parent_q and stats_q of pidx next clock
                 end
                 P_F_CHK: begin
-                    if (parent_q == pidx[7:0]) begin
-                        pidx <= pidx - 9'd1;
+                    if (parent_q == pidx[9:0]) begin
+                        pidx <= pidx - 11'd1;
                         pstate <= P_F_RD;
                     end else begin
                         child <= stats_q;
@@ -495,7 +495,7 @@ module shape_detector #(
                     stats_we <= 1;
                     stats_waddr <= fpar;
                     stats_wdata <= merge_stats(stats_q, child);
-                    pidx <= pidx - 9'd1;
+                    pidx <= pidx - 11'd1;
                     pstate <= P_F_GAP;          // let the write land before the next read
                 end
                 // classify every root
@@ -504,9 +504,9 @@ module shape_detector #(
                     else pstate <= P_C_CHK;
                 end
                 P_C_CHK: begin
-                    if (parent_q != pidx[7:0] || stats_q[OFL] ||
+                    if (parent_q != pidx[9:0] || stats_q[OFL] ||
                         stats_q[OA +: WA] < A_MIN || stats_q[OA +: WA] > A_MAX) begin
-                        pidx <= pidx + 9'd1;
+                        pidx <= pidx + 11'd1;
                         pstate <= P_C_RD;
                     end else begin
                         cA   <= stats_q[OA   +: WA  ];
@@ -593,7 +593,7 @@ module shape_detector #(
                         pend_data[pend_count*41 +: 41] <= {cls, cbox[37:0]};
                         pend_count <= pend_count + 6'd1;
                     end
-                    pidx <= pidx + 9'd1;
+                    pidx <= pidx + 11'd1;
                     pstate <= P_C_RD;
                 end
                 P_DONE: begin

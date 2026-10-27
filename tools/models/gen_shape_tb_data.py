@@ -44,8 +44,20 @@ def bowtie(cx, cy, s, bridge):
     return f
 
 
+def dots(x0, y0, cols, rows, pitch, size):
+    def f(X, Y):
+        u = X - x0
+        v = Y - y0
+        inside = (u >= 0) & (u < cols * pitch) & (v >= 0) & (v < rows * pitch)
+        return inside & ((u % pitch) < size) & ((v % pitch) < size)
+    return f
+
+
 r = math.radians
 CASES = {
+    # 720 dots above the shapes: more labels than the old 255-entry table
+    'clutter': page([dots(20, 6, 60, 12, 10, 4), sf.ellipse(130, 250, 55, 55),
+                     sf.rect(330, 250, 110, 110, r(20)), sf.ellipse(530, 250, 80, 45, r(30))]),
     'mixed': page([sf.ellipse(130, 110, 50, 50), sf.rect(330, 110, 150, 100, r(25)),
                    sf.triangle(520, 120, 60, r(10)), sf.ellipse(150, 270, 90, 45, r(20)),
                    sf.rounded(380, 270, 160, 100, 30), sf.rect(560, 280, 70, 70, r(40))]),

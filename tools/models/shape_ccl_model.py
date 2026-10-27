@@ -12,7 +12,7 @@ Usage as a library (classify_frame) or as a script (renders test pages).
 import math
 
 W, H = 640, 360
-MAX_LABELS = 255
+MAX_LABELS = 1023
 MAX_OBJECTS = 32
 A_MIN, A_MAX = 600, 100000
 
@@ -34,7 +34,7 @@ def threshold_from_sum(gray_sum):
     return (gray_sum * 175) >> 26
 
 
-MAX_PAIRS = 255
+MAX_PAIRS = 1023
 
 
 def label_frame(gray, thr):
