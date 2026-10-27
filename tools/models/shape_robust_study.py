@@ -161,7 +161,7 @@ def feats(e):
     w = e['x1'] - e['x0'] + 1
     h = e['y1'] - e['y0'] + 1
     cvx = (e['R'] + e['T']) / (w + h)
-    rho = (e['G'] / A) / max(e['SO'] / max(e['NO'], 1), 1)
+    rho = (e['G'] / max(e['AD'], 1)) / max(e['SO'] / max(e['NO'], 1), 1)
     off_x = abs(2 * e['Sx'] - A * (e['x0'] + e['x1'])) / (A * w)
     off_y = abs(2 * e['Sy'] - A * (e['y0'] + e['y1'])) / (A * h)
     return dict(A=A, J2=j2, ASP2=qn * 1024 / qd, CVX=cvx, RHO=rho, W=w, H=h,

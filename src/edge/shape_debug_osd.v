@@ -5,7 +5,7 @@
 //   TRK nn     objects shown after cross-frame voting
 //   ARE nnnnn  area (samples, 640x360 grid) of the largest candidate
 //   RHO nnn    100 x its mean gray / mean of its surroundings
-//   PER nnn    100 x (runs + top edges) / (width + height)
+//   PER nnn    100 x (runs + top edges) / (width + height), readout only
 //   MOM nnn    J^2 * 2^16 (circle/ellipse 415, rectangle 455, triangle 607)
 //   FIL nn     box fill x 64 (circle 50)
 //   ERR nnn    reject bits (shape_detector dbg_why), 0 = accepted
