@@ -43,6 +43,8 @@ module tb_shape_detector;
         for (f = 0; f < 5; f = f + 1) frame;
         $display("threshold %0d", threshold);
         $display("objects %0d", obj_count);
+        $display("debug area %0d rho %0d per %0d mom %0d fill %0d why %0d", dut.dbg_area,
+                 dut.dbg_rho, dut.dbg_cvx, dut.dbg_j, dut.dbg_fill, dut.dbg_why);
         for (k = 0; k < obj_count; k = k + 1)
             $display("obj %0d %0d %0d %0d %0d", obj_data[k*41+38 +: 3],
                      obj_data[k*41+28 +: 10], obj_data[k*41+18 +: 10],

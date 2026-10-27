@@ -1550,18 +1550,38 @@ module example_top
 	//    rectangle (circle_geometry_detector).
 	localparam SHAPE_DETECTOR = 1'b1;
 	localparam SHAPE_TRACKER = 1'b1;
+	localparam SHAPE_DEBUG_OSD = 1'b1;
 	wire [23:0] shape_rgb;
 	wire shape_vs, shape_hs, shape_de;
 	generate if (SHAPE_DETECTOR) begin: ccl_shapes
 		wire [5:0] shape_count, detected_count;
 		wire [32*41-1:0] shape_objects, detected_objects;
 		wire detected_strobe;
+		wire [17:0] dbg_area;
+		wire [9:0] dbg_rho, dbg_cvx, dbg_j;
+		wire [6:0] dbg_fill, dbg_why;
 		shape_detector u_shape_detector (
 			.clk(clk_pixel), .rst_n(rstn_pixel), .vsync_n(filtered_vs),
 			.de(filtered_valid), .gray(filtered_pixel),
 			.obj_count(detected_count), .obj_data(detected_objects), .threshold(),
-			.obj_strobe(detected_strobe)
+			.obj_strobe(detected_strobe),
+			.dbg_area(dbg_area), .dbg_rho(dbg_rho), .dbg_cvx(dbg_cvx), .dbg_j(dbg_j),
+			.dbg_fill(dbg_fill), .dbg_why(dbg_why)
 		);
+		// Recognition readout (DET/TRK/ARE/RHO/PER/MOM/FIL/ERR) under the
+		// status text while recognition is on. SHAPE_DEBUG_OSD = 0 hides it.
+		wire [23:0] shape_osd_rgb;
+		if (SHAPE_DEBUG_OSD) begin: debug_readout
+			shape_debug_osd u_shape_debug_osd (
+				.clk(clk_pixel), .rst_n(rstn_pixel), .vs(lcd_vs), .de(lcd_de),
+				.enable(recognition_on), .rgb_in(FPS_OSD_ENABLE ? edge_fps_rgb : edge_rgb),
+				.det_count(detected_count), .trk_count(shape_count),
+				.area(dbg_area), .rho(dbg_rho), .cvx(dbg_cvx), .mom(dbg_j),
+				.fill(dbg_fill), .why(dbg_why), .rgb_out(shape_osd_rgb)
+			);
+		end else begin: no_readout
+			assign shape_osd_rgb = FPS_OSD_ENABLE ? edge_fps_rgb : edge_rgb;
+		end
 		// Cross-frame voting: a box appears after two detections, keeps its
 		// class until three detections agree on a new one, and survives two
 		// missed analyses. SHAPE_TRACKER = 0 shows the raw detector output.
@@ -1579,7 +1599,7 @@ module example_top
 		shape_overlay #(.X_OFF(ALIGN_PIXEL_DELAY), .Y_OFF(ALIGN_ROW_DELAY - 1)) u_shape_overlay (
 			.clk(clk_pixel), .rst_n(rstn_pixel), .enable(recognition_on),
 			.vs_in(lcd_vs), .hs_in(lcd_hs), .de_in(lcd_de),
-			.rgb_in(FPS_OSD_ENABLE ? edge_fps_rgb : edge_rgb),
+			.rgb_in(shape_osd_rgb),
 			.edge_in(final_edge && aligned_rgb_valid),
 			.obj_count(shape_count), .obj_data(shape_objects),
 			.vs_out(shape_vs), .hs_out(shape_hs), .de_out(shape_de), .rgb_out(shape_rgb)

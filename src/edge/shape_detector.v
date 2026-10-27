@@ -19,7 +19,7 @@
 //           root from J^2 = det(second central moments) / A^4 (ellipse
 //           0.0796^2, rectangle 0.0833^2, triangle 0.0962^2) and the moment
 //           aspect ratio (round below about 1.12). Rejected as clutter:
-//           mean gray above 0.45 x the surroundings (not ink on paper),
+//           mean gray above 0.65 x the surroundings (not ink on paper),
 //           runs + top edges above 1.5 x (width + height) (ragged, concave
 //           or holed), aspect above about 3.5 (strokes), and for the
 //           symmetric classes a centroid more than 1/16 of the box size off
@@ -39,7 +39,14 @@ module shape_detector #(
     // per object {cls[2:0], x0[9:0], x1[9:0], y0[8:0], y1[8:0]}, half resolution
     output reg  [MAX_OBJECTS*41-1:0] obj_data,
     output reg  [7:0]  threshold,
-    output reg         obj_strobe      // one clock: obj_count / obj_data are new
+    output reg         obj_strobe,     // one clock: obj_count / obj_data are new
+    // Debug readout of the largest candidate of the last analysis (area in
+    // samples, 100 x inside/outside gray, 100 x (runs+tops)/(w+h), J^2*2^16,
+    // fill/64, reject bits: 0 ragged, 1 contrast, 2 aspect, 3 no J band,
+    // 4 off-centre, 5 fill, 6 triangle symmetric; 0 = accepted)
+    output reg  [17:0] dbg_area,
+    output reg  [9:0]  dbg_rho, dbg_cvx, dbg_j,
+    output reg  [6:0]  dbg_fill, dbg_why
 );
     localparam integer SW = 640, SH = 360;
     localparam [2:0] CLS_NONE = 3'd0, CLS_CIRCLE = 3'd1, CLS_ELLIPSE = 3'd2,
@@ -329,11 +336,11 @@ module shape_detector #(
     wire        fill_c = fill >= FILL_C_MIN && fill <= FILL_C_MAX;
     wire        fill_e = fill >= FILL_E_MIN && fill <= FILL_E_MAX;
     wire        fill_t = fill >= FILL_T_MIN && fill <= FILL_T_MAX;
-    // Clutter rejection. cG*cNO vs cSO*cA: mean inside <= 9/20 of the mean of
+    // Clutter rejection. cG*cNO vs cSO*cA: mean inside <= 13/20 of the mean of
     // the surrounding samples; aspect <= ~3.5 (Qn*1024 <= Qd*740); circle,
     // ellipse, square and rectangle centred within 1/16 of the box size.
     reg [63:0] cG, cSO, cNO, t_g, t_s;
-    wire        contrast_ok = (t_g << 4) + (t_g << 2) <= (t_s << 3) + t_s;
+    wire        contrast_ok = (t_g << 4) + (t_g << 2) <= (t_s << 3) + (t_s << 2) + t_s;
     wire        aspect_ok = (qn << 10) <= (qd << 9) + (qd << 7) + (qd << 6) + (qd << 5) + (qd << 2);
     wire        centred = (off_x <= (t_wx >> 4)) && (off_y <= (t_wy >> 4));
     // runs + top edges <= 1.5 x (width + height), from the statistics word
@@ -341,6 +348,22 @@ module shape_detector #(
     wire [9:0]  q_h = stats_q[OY1 +: 9] - stats_q[OY0 +: 9] + 10'd1;
     wire [19:0] q_rt = stats_q[ORN +: 18] + stats_q[OT +: 18];
     wire        convex_ok = (q_rt << 1) <= ({9'd0, q_w} + q_h) * 3;
+    reg         c_cvx_ok;
+    reg [19:0]  c_rt, c_whs;
+    reg [63:0]  rho100, cvx100, dbg_best;
+    reg [17:0]  pdbg_area;
+    reg [9:0]   pdbg_rho, pdbg_cvx, pdbg_j;
+    reg [6:0]   pdbg_fill, pdbg_why;
+    wire        band_e = j2 <= K_ELLIPSE_MAX;
+    wire        band_r = j2 >= K_RECT_MIN && j2 <= K_RECT_MAX;
+    wire        band_t = j2 >= K_TRI_MIN && j2 <= K_TRI_MAX;
+    wire [6:0]  why = {band_t && !tri_asym,
+                       (band_e && !(rounder ? fill_c : fill_e)) || (band_t && !fill_t),
+                       (band_e || band_r) && !centred,
+                       !band_e && !band_r && !band_t,
+                       !aspect_ok,
+                       cNO == 0 || !contrast_ok,
+                       !c_cvx_ok};
 
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
@@ -369,6 +392,9 @@ module shape_detector #(
             cbox <= 0; cstep <= 0; cwait <= 0; cls <= 0;
             t_bx <= 0; t_by <= 0; t_wx <= 0; t_wy <= 0;
             cG <= 0; cSO <= 0; cNO <= 0; t_g <= 0; t_s <= 0; t_wh <= 0; fill <= 0;
+            c_cvx_ok <= 0; c_rt <= 0; c_whs <= 0; rho100 <= 0; cvx100 <= 0; dbg_best <= 0;
+            pdbg_area <= 0; pdbg_rho <= 0; pdbg_cvx <= 0; pdbg_j <= 0; pdbg_fill <= 0; pdbg_why <= 0;
+            dbg_area <= 0; dbg_rho <= 0; dbg_cvx <= 0; dbg_j <= 0; dbg_fill <= 0; dbg_why <= 0;
             s1_gray <= 0; s2_gray <= 0; g_m1 <= 0; g_m2 <= 0;
             run_sg <= 0; run_top <= 0; run_so <= 0; run_no <= 0;
             ev_sg <= 0; ev_top <= 0; ev_so <= 0; ev_no <= 0;
@@ -387,6 +413,9 @@ module shape_detector #(
                     post_done <= 0;
                     pidx <= 0;
                     pend_count <= 0;
+                    dbg_best <= 0;
+                    pdbg_area <= 0; pdbg_rho <= 0; pdbg_cvx <= 0;
+                    pdbg_j <= 0; pdbg_fill <= 0; pdbg_why <= 0;
                     pstate <= P_PINIT;
                     threshold <= (thr_calc < 30) ? 8'd30 : (thr_calc > 200) ? 8'd200 : thr_calc[7:0];
                 end else if (post_done) begin
@@ -588,11 +617,15 @@ module shape_detector #(
                 end
                 P_C_CHK: begin
                     if (parent_q != pidx[9:0] || stats_q[OFL] ||
-                        stats_q[OA +: WA] < A_MIN || stats_q[OA +: WA] > A_MAX ||
-                        stats_q[ONO +: 18] == 0 || !convex_ok) begin
+                        stats_q[OA +: WA] < A_MIN || stats_q[OA +: WA] > A_MAX) begin
                         pidx <= pidx + 11'd1;
                         pstate <= P_C_RD;
                     end else begin
+                        // convexity is decided at the end, with the other
+                        // tests, so the debug readout sees every candidate
+                        c_cvx_ok <= convex_ok;
+                        c_rt <= q_rt;
+                        c_whs <= {9'd0, q_w} + q_h;
                         cA   <= stats_q[OA   +: WA  ];
                         cSx  <= stats_q[OSX  +: WSX ];
                         cSy  <= stats_q[OSY  +: WSY ];
@@ -636,6 +669,9 @@ module shape_detector #(
                             5'd21: begin op_a <= cbox[27:18] - cbox[37:28] + 10'd1;
                                          op_b <= cbox[8:0] - cbox[17:9] + 9'd1; mul_go <= 1; end
                             5'd22: begin op_a <= cA << 6; op_b <= t_wh; div_go <= 1; end
+                            // debug readout only: 100 x inside/outside, 100 x convexity
+                            5'd23: begin op_a <= (t_g << 6) + (t_g << 5) + (t_g << 2); op_b <= t_s; div_go <= 1; end
+                            5'd24: begin op_a <= c_rt * 7'd100; op_b <= c_whs; div_go <= 1; end
                             default: ;
                         endcase
                         if (cstep == 5'd12 && p1 <= p2) begin
@@ -644,9 +680,18 @@ module shape_detector #(
                             cls <= CLS_NONE;
                             pstate <= P_C_STORE;
                         end
-                        if (cstep == 5'd23) begin
+                        if (cstep == 5'd25) begin
                             cwait <= 0;
-                            if (!contrast_ok || !aspect_ok) cls <= CLS_NONE;
+                            if (cA > dbg_best) begin
+                                dbg_best <= cA;
+                                pdbg_area <= cA[17:0];
+                                pdbg_rho <= (rho100 > 64'd999) ? 10'd999 : rho100[9:0];
+                                pdbg_cvx <= (cvx100 > 64'd999) ? 10'd999 : cvx100[9:0];
+                                pdbg_j <= ((j2 >> 10) > 64'd999) ? 10'd999 : j2[19:10];
+                                pdbg_fill <= (fill > 64'd99) ? 7'd99 : fill[6:0];
+                                pdbg_why <= why;
+                            end
+                            if (!c_cvx_ok || cNO == 0 || !contrast_ok || !aspect_ok) cls <= CLS_NONE;
                             else if (j2 <= K_ELLIPSE_MAX)
                                 cls <= (!centred || !(rounder ? fill_c : fill_e)) ? CLS_NONE :
                                        rounder ? CLS_CIRCLE : CLS_ELLIPSE;
@@ -684,6 +729,8 @@ module shape_detector #(
                             5'd20: t_s <= r_mul;
                             5'd21: t_wh <= r_mul;
                             5'd22: fill <= r_div;
+                            5'd23: rho100 <= r_div;
+                            5'd24: cvx100 <= r_div;
                             default: ;
                         endcase
                     end
@@ -700,6 +747,8 @@ module shape_detector #(
                 P_DONE: begin
                     obj_count <= pend_count;
                     obj_strobe <= 1;
+                    dbg_area <= pdbg_area; dbg_rho <= pdbg_rho; dbg_cvx <= pdbg_cvx;
+                    dbg_j <= pdbg_j; dbg_fill <= pdbg_fill; dbg_why <= pdbg_why;
                     obj_data <= pend_data;
                     post_done <= 1;
                     pstate <= P_IDLE;
