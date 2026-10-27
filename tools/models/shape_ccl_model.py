@@ -37,7 +37,8 @@ def threshold_from_sum(gray_sum):
 MAX_PAIRS = 1023
 OUTER = 2                  # surrounding sample: 2 samples left of each run start
 # Clutter rejection (tools/models/shape_robust_study.py, docs/sim_data):
-RHO_NUM, RHO_DEN = 9, 20   # mean inside <= 0.45 x mean of the surrounding samples
+RHO_NUM, RHO_DEN = 13, 20  # mean inside <= 0.65 x mean of the surrounding samples
+                           # (0.45 rejected real ink: the camera gray is gamma-encoded)
 CVX_NUM, CVX_DEN = 3, 2    # runs + top edges <= 1.5 x (width + height)
 ASP_MAX = 740              # aspect <= ~3.5: Qn * 1024 <= Qd * 740
 SYM_SHIFT = 4              # circle/ellipse/square/rect: centroid within 1/16
