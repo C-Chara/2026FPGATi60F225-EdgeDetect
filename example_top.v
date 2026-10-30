@@ -1510,14 +1510,15 @@ module example_top
 			change_valid_pixel <= change_sync[7];
 		end
 	end
-	// Only the centre of the picture (x 320..959, y 108..611, 35 % of the
-	// frame) is counted, so a busy background around the subject does not
-	// push the threshold up; the band is 2.1..3.3 % of that area and the
-	// threshold stays within 48..112.
-	wire auto_roi = diagnostic_lcd_x >= 12'd320 && diagnostic_lcd_x < 12'd960 &&
-	                diagnostic_lcd_y >= 12'd108 && diagnostic_lcd_y < 12'd612;
-	edge_auto_threshold #(.INITIAL(EDGE_THRESHOLD), .MIN(12'd48), .MAX(12'd112),
-		.TARGET_LO(20'd6700), .TARGET_HI(20'd10500)) u_edge_auto_threshold (
+	// Only the middle of the picture (x 427..852, y 160..559, 18.5 % of the
+	// frame: the subject) is counted, so the background does not decide;
+	// the band is 2.1..3.3 % of that area. The automatic threshold never
+	// goes above the manual default (48..88): busy scenes behave exactly as
+	// before, low-contrast subjects such as faces get a lower threshold.
+	wire auto_roi = diagnostic_lcd_x >= 12'd427 && diagnostic_lcd_x < 12'd853 &&
+	                diagnostic_lcd_y >= 12'd160 && diagnostic_lcd_y < 12'd560;
+	edge_auto_threshold #(.INITIAL(EDGE_THRESHOLD), .MIN(12'd48), .MAX(EDGE_THRESHOLD),
+		.TARGET_LO(20'd3500), .TARGET_HI(20'd5600)) u_edge_auto_threshold (
 		.clk(clk_pixel), .rst_n(rstn_pixel), .vs(lcd_vs),
 		.edge_pix(final_edge && aligned_rgb_valid && auto_roi),
 		.threshold(auto_threshold), .edge_count(edge_count)
