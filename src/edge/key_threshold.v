@@ -7,7 +7,8 @@
 // With FOCUS_ENABLE=0 the same long combined hold steps tnr_mode instead:
 //   1 <-> 2 (the top level decides what each value means).
 // K1+K2 pressed and released together: next median demo state, cycling
-//   median on -> median on + salt/pepper noise -> median off + noise.
+//   median on -> median on + salt/pepper noise -> median off + noise ->
+//   median off (fine lines, e.g. line drawings, survive without the median).
 // A combined press never changes the threshold, mode or freeze.
 // Automatic threshold (auto_on, set at power-up): the first K1/K2 short
 // press switches to manual, starting from auto_value +/- 1. In manual mode
@@ -144,13 +145,13 @@ module key_threshold #(
             // A short combined press steps the median demo when it ends.
             if(!both_pressed && both_d && !combo_long) begin
                 if(!auto_on) auto_on<=1;          // manual: back to automatic
-                else demo_state<=demo_state==2'd2 ? 2'd0 : demo_state+2'd1;
+                else demo_state<=demo_state+2'd1;
             end
             if(!vsync_n) begin
                 threshold_active<=requested;
                 mode_active<=requested_mode;
-                median_on<=demo_state!=2'd2;
-                noise_on<=demo_state!=2'd0;
+                median_on<=!demo_state[1];
+                noise_on<=demo_state[0]^demo_state[1];
             end
         end
     end
