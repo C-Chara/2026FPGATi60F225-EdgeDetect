@@ -1249,6 +1249,9 @@ module example_top
 	// Set to 1 to make the previous frame's NMS winner sticky (one extra
 	// clock). 0 restores the 2026-10-11 same-pixel two-frame confirmation.
 	localparam TEMPORAL_STICKY_ENABLE = 1'b1;
+	// 0: the sticky stage keeps its latency but uses no previous-frame
+	// state (no cross-frame edge hold): every frame is decided on its own.
+	localparam EDGE_HOLD_ENABLE = 1'b1;
 	wire [7:0] smooth_pixel, smooth_center;
 	wire smooth_valid;
 	generate if (GAUSSIAN_ENABLE) begin: gaussian_enabled
@@ -1360,7 +1363,7 @@ module example_top
         // within 1/4 of its gradient-direction peak; an isolated new pixel
         // needs the full threshold.
         edge_temporal_sticky #(.H_ACTIVE(1276), .V_ACTIVE(720),
-            .TOLERANCE_SHIFT(2)) u_edge_temporal_sticky (
+            .TOLERANCE_SHIFT(2), .HOLD_ENABLE(EDGE_HOLD_ENABLE)) u_edge_temporal_sticky (
             .clk(clk_pixel), .rst_n(rstn_pixel), .vsync_n(lcd_vs),
             .pixel_valid(hysteresis_valid), .edge_in(hysteresis_edge),
             .gray_in(hysteresis_gray), .magnitude_in(magnitude_d2),

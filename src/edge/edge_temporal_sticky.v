@@ -29,12 +29,16 @@
 // one-bit line RAMs supply the current and upper rows, so all nine state
 // bits come from the previous pass. Latency: 3 clocks, no added rows.
 // The first row of the stream has no stored state and passes edge_in.
+// HOLD_ENABLE = 0 switches the previous-frame terms off: the output is the
+// current frame's edge with the same latency (the state is still stored,
+// so toggle_out still measures flicker).
 module edge_temporal_sticky #(
     parameter integer H_ACTIVE = 1276,
     parameter integer V_ACTIVE = 720,
     parameter integer TOLERANCE_SHIFT = 2,
     parameter [11:0] TOLERANCE_BASE = 12'd8,
-    parameter ONSET_GATE_ENABLE = 1'b1
+    parameter ONSET_GATE_ENABLE = 1'b1,
+    parameter HOLD_ENABLE = 1'b1
 )(
     input  wire        clk,
     input  wire        rst_n,
@@ -129,7 +133,7 @@ module edge_temporal_sticky #(
         (now_l || now_c || (valid_1 && now_q)));
     wire onset_ok = !ONSET_GATE_ENABLE || state_c || onset_strong_2 ||
         any_neighbor_state || now_neighbor;
-    wire keep = held || (edge_2 && !challenger && onset_ok);
+    wire keep = HOLD_ENABLE ? (held || (edge_2 && !challenger && onset_ok)) : edge_2;
 
     // RAM read registers stay out of reset to preserve block-RAM inference.
     always @(posedge clk) begin
