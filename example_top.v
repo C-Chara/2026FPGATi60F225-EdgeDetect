@@ -1589,6 +1589,8 @@ module example_top
 		wire [6:0] dbg_fill, dbg_why;
 		wire [2:0] dig_count;
 		wire [4*38-1:0] dig_data;
+		wire [4:0] mom_raddr;
+		wire [77:0] mom_q;
 		wire smp_v, smp_dark;
 		wire [9:0] smp_x;
 		wire [8:0] smp_y;
@@ -1596,7 +1598,7 @@ module example_top
 			.clk(clk_pixel), .rst_n(rstn_pixel), .vsync_n(filtered_vs),
 			.de(filtered_valid), .gray(filtered_pixel),
 			.obj_count(detected_count), .obj_data(detected_objects), .threshold(),
-			.obj_strobe(detected_strobe),
+			.obj_strobe(detected_strobe), .mom_raddr(mom_raddr), .mom_q(mom_q),
 			.dbg_area(dbg_area), .dbg_rho(dbg_rho), .dbg_cvx(dbg_cvx), .dbg_j(dbg_j),
 			.dbg_fill(dbg_fill), .dbg_why(dbg_why),
 			.dig_count(dig_count), .dig_data(dig_data),
@@ -1638,6 +1640,8 @@ module example_top
 			.rgb_in(shape_osd_rgb),
 			.edge_in(final_edge && aligned_rgb_valid),
 			.obj_count(shape_count), .obj_data(shape_objects),
+			.det_count(detected_count), .det_data(detected_objects),
+			.mom_raddr(mom_raddr), .mom_q(mom_q),
 			.vs_out(ov_vs), .hs_out(ov_hs), .de_out(ov_de), .rgb_out(ov_rgb)
 		);
 		// Printed digits 1-9 (digit_reader): objects that are no shape are

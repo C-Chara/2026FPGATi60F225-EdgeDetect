@@ -12,16 +12,20 @@ module tb_shape_overlay;
     wire [5:0] obj_count;
     wire [32*41-1:0] obj_data;
     wire [7:0] threshold;
+    wire [4:0] mom_raddr;
+    wire [77:0] mom_q;
     wire vs_o, hs_o, de_o;
     wire [23:0] rgb_o;
     shape_detector u_det (
         .clk(clk), .rst_n(rst_n), .vsync_n(vsync_n), .de(de), .gray(gray),
-        .obj_count(obj_count), .obj_data(obj_data), .threshold(threshold)
+        .obj_count(obj_count), .obj_data(obj_data), .threshold(threshold),
+        .mom_raddr(mom_raddr), .mom_q(mom_q)
     );
     shape_overlay u_ovl (
         .clk(clk), .rst_n(rst_n), .enable(1'b1),
         .vs_in(vsync_n), .hs_in(hs), .de_in(de), .rgb_in({gray, gray, gray}), .edge_in(edge_px),
         .obj_count(obj_count), .obj_data(obj_data),
+        .det_count(obj_count), .det_data(obj_data), .mom_raddr(mom_raddr), .mom_q(mom_q),
         .vs_out(vs_o), .hs_out(hs_o), .de_out(de_o), .rgb_out(rgb_o)
     );
     always #6.72 clk = ~clk;

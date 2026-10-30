@@ -41,6 +41,14 @@ module shape_detector #(
     output reg  [5:0]  obj_count,
     // per object {cls[2:0], x0[9:0], x1[9:0], y0[8:0], y1[8:0]}, half resolution
     output reg  [MAX_OBJECTS*41-1:0] obj_data,
+    // Per object (entry k = obj_data entry k), for the overlay's colouring,
+    // read from a RAM (registered, one clock): mom_q = entry mom_raddr =
+    // {cx4[11:0], cy4[10:0], ka[17:0], kb_neg, kb[17:0], kc[17:0]}: the
+    // centroid in quarter samples (4 x Sx / A) and the inverse second-moment
+    // matrix, ka = m02 * 2^28 / det, kb = 2 * |m11| * 2^28 / det (sign kb_neg),
+    // kc = m20 * 2^28 / det (det = m20 * m02 - m11^2; saturated to 18 bits).
+    input  wire [4:0]  mom_raddr,
+    output reg  [77:0] mom_q,
     output reg  [7:0]  threshold,
     output reg         obj_strobe,     // one clock: obj_count / obj_data are new
     // Debug readout of the largest candidate of the last analysis (area in
@@ -504,6 +512,21 @@ module shape_detector #(
     reg [2:0]  cls;
     reg [5:0]  pend_count;
     reg [MAX_OBJECTS*41-1:0] pend_data;
+    // Moments: two banks of 32 entries; the published bank is read, the
+    // other is written during PROCESS and becomes published at P_DONE.
+    reg [77:0] mom_ram [0:63];
+    reg        mom_pub, mom_we;
+    reg [5:0]  mom_waddr;
+    reg [77:0] mom_wdata;
+    always @(posedge clk) begin
+        if (mom_we) mom_ram[mom_waddr] <= mom_wdata;
+        mom_q <= mom_ram[{mom_pub, mom_raddr}];
+    end
+    reg        c11_neg;
+    reg [63:0] mcx, mcy, mka, mkb, mkc;
+    wire [17:0] mka_s = (mka > 64'd262143) ? 18'd262143 : mka[17:0];
+    wire [17:0] mkb_s = (mkb > 64'd262143) ? 18'd262143 : mkb[17:0];
+    wire [17:0] mkc_s = (mkc > 64'd262143) ? 18'd262143 : mkc[17:0];
     wire [63:0] r_mul = mul_acc, r_div = div_q;
     wire [63:0] d_m = (m20 > m02) ? m20 - m02 : m02 - m20;
     wire [63:0] qn = dd + (p2 << 2);
@@ -603,9 +626,12 @@ module shape_detector #(
             run_gn <= 0; run_gsx <= 0; run_gsxx <= 0; ev_gn <= 0; ev_gsx <= 0; ev_gsxx <= 0;
             up_nf <= 0; up_sxf <= 0; up_sxxf <= 0; cAD <= 0;
             pend_count <= 0; pend_data <= 0;
+            mom_pub <= 0; mom_we <= 0; mom_waddr <= 0; mom_wdata <= 0;
+            c11_neg <= 0; mcx <= 0; mcy <= 0; mka <= 0; mkb <= 0; mkc <= 0;
             obj_count <= 0; obj_data <= 0; obj_strobe <= 0;
         end else begin
             runw_en <= 0; stats_we <= 0; pair_we <= 0; parent_we <= 0; obj_strobe <= 0;
+            mom_we <= 0;
             mul_go <= 0; div_go <= 0;
 
             // ---------------- frame phase ----------------
@@ -899,6 +925,12 @@ module shape_detector #(
                             // debug readout only: 100 x inside/outside, 100 x convexity
                             5'd23: begin op_a <= (t_g << 6) + (t_g << 5) + (t_g << 2); op_b <= t_s; div_go <= 1; end
                             5'd24: begin op_a <= c_rt * 7'd100; op_b <= c_whs; div_go <= 1; end
+                            // overlay colouring: centroid and inverse moments
+                            5'd25: begin op_a <= cSx << 2; op_b <= cA; div_go <= 1; end
+                            5'd26: begin op_a <= cSy << 2; op_b <= cA; div_go <= 1; end
+                            5'd27: begin op_a <= m02 << 28; op_b <= p1 - p2; div_go <= 1; end
+                            5'd28: begin op_a <= m11 << 29; op_b <= p1 - p2; div_go <= 1; end
+                            5'd29: begin op_a <= m20 << 28; op_b <= p1 - p2; div_go <= 1; end
                             default: ;
                         endcase
                         if (cstep == 5'd12 && p1 <= p2) begin
@@ -907,7 +939,7 @@ module shape_detector #(
                             cls <= CLS_NONE;
                             pstate <= P_C_STORE;
                         end
-                        if (cstep == 5'd25) begin
+                        if (cstep == 5'd30) begin
                             cwait <= 0;
                             if (cA > dbg_best) begin
                                 dbg_best <= cA;
@@ -931,7 +963,7 @@ module shape_detector #(
                             5'd2:  t1 <= r_mul;
                             5'd3:  c02 <= (t1 >= r_mul) ? t1 - r_mul : 64'd0;
                             5'd4:  t1 <= r_mul;
-                            5'd5:  c11 <= (t1 >= r_mul) ? t1 - r_mul : r_mul - t1;
+                            5'd5:  begin c11 <= (t1 >= r_mul) ? t1 - r_mul : r_mul - t1; c11_neg <= t1 < r_mul; end
                             5'd6:  aa <= r_mul;
                             5'd7:  m20 <= r_div;
                             5'd8:  m02 <= r_div;
@@ -951,6 +983,11 @@ module shape_detector #(
                             5'd22: fill <= r_div;
                             5'd23: rho100 <= r_div;
                             5'd24: cvx100 <= r_div;
+                            5'd25: mcx <= r_div;
+                            5'd26: mcy <= r_div;
+                            5'd27: mka <= r_div;
+                            5'd28: mkb <= r_div;
+                            5'd29: mkc <= r_div;
                             default: ;
                         endcase
                     end
@@ -959,6 +996,9 @@ module shape_detector #(
                 P_C_STORE: begin
                     if (cls != CLS_NONE && pend_count < MAX_OBJECTS) begin
                         pend_data[pend_count*41 +: 41] <= {cls, cbox[37:0]};
+                        mom_we <= 1;
+                        mom_waddr <= {!mom_pub, pend_count[4:0]};
+                        mom_wdata <= {mcx[11:0], mcy[10:0], mka_s, c11_neg, mkb_s, mkc_s};
                         pend_count <= pend_count + 6'd1;
                     end
                     if (dig_ok && pend_dcount < MAX_DIGITS) begin
@@ -977,6 +1017,7 @@ module shape_detector #(
                     dbg_area <= pdbg_area; dbg_rho <= pdbg_rho; dbg_cvx <= pdbg_cvx;
                     dbg_j <= pdbg_j; dbg_fill <= pdbg_fill; dbg_why <= pdbg_why;
                     obj_data <= pend_data;
+                    mom_pub <= !mom_pub;
                     post_done <= 1;
                     pstate <= P_IDLE;
                 end
