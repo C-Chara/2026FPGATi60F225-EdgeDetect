@@ -55,6 +55,9 @@ def dots(x0, y0, cols, rows, pitch, size):
 
 r = math.radians
 CASES = {
+    # two shapes close together: their boxes overlap the other one's outline
+    'overlap': page([sf.ellipse(250, 150, 48, 48), sf.rect(330, 215, 84, 84, r(30)),
+                     sf.triangle(420, 140, 80, r(20))]),
     # 720 dots above the shapes: more labels than the old 255-entry table
     'clutter': page([dots(20, 6, 60, 12, 10, 4), sf.ellipse(130, 250, 55, 55),
                      sf.rect(330, 250, 110, 110, r(20)), sf.ellipse(530, 250, 80, 45, r(30))]),

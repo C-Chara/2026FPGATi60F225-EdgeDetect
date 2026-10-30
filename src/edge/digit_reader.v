@@ -11,11 +11,15 @@
 // 0-9 at -8, 0, +8 degrees, src/edge/digit_templates.v): distance = cells
 // that differ among the template's sure cells; per digit the best rotation.
 // Accepted: best distance <= DMAX, the next digit at least 2 further, digit
-// not 0. A slot shows a digit once two reads in a row agree.
+// not 0. Each read goes to the display slot whose box contains its centre
+// (the candidate list order may change between analyses); a slot shows a
+// digit once two reads in a row agree, and is dropped after AGE_MAX reads
+// of other candidates without one of its own.
 // No RAM blocks: counters and templates are logic.
 module digit_reader #(
     parameter integer N = 4,
-    parameter integer DMAX = 8
+    parameter integer DMAX = 8,
+    parameter integer AGE_MAX = 12
 )(
     input  wire        clk,
     input  wire        rst_n,
@@ -85,6 +89,34 @@ module digit_reader #(
     reg  [6:0]  b1, b2;
     reg  [3:0]  c1;
     reg  [3:0]  last [0:N-1];
+    reg  [3:0]  age  [0:N-1];
+    reg  [N-1:0] s_ok;
+    // slot of the current read: the valid slot whose box holds the centre of
+    // the read box, else a free slot, else the oldest one
+    wire [10:0] c_cx2 = c_x0 + c_x1;
+    wire [9:0]  c_cy2 = c_y0 + c_y1;
+    reg  [1:0]  ps;
+    reg         pfound;
+    integer     z;
+    always @* begin
+        pfound = 1'b0; ps = 2'd0;
+        for (z = N - 1; z >= 0; z = z - 1)
+            if (s_ok[z] && {1'b0, slot_box[z*38+28 +: 10]} * 2 <= c_cx2 &&
+                c_cx2 <= {1'b0, slot_box[z*38+18 +: 10]} * 2 + 1 &&
+                {1'b0, slot_box[z*38+9 +: 9]} * 2 <= c_cy2 &&
+                c_cy2 <= {1'b0, slot_box[z*38 +: 9]} * 2 + 1) begin
+                pfound = 1'b1; ps = z[1:0];
+            end
+        if (!pfound) begin
+            for (z = N - 1; z >= 0; z = z - 1)
+                if (!s_ok[z]) begin pfound = 1'b1; ps = z[1:0]; end
+        end
+        if (!pfound) begin
+            ps = 2'd0;
+            for (z = 1; z < N; z = z + 1)
+                if (age[z] > age[ps]) ps = z[1:0];
+        end
+    end
     function [6:0] popcount;
         input [NC-1:0] v;
         integer i;
@@ -106,7 +138,8 @@ module digit_reader #(
             slot_count <= 0; slot_box <= 0; slot_digit <= {N{4'hf}};
             for (q = 0; q < NC; q = q + 1) acc[q] <= 0;
             for (q = 0; q < 10; q = q + 1) dmin[q] <= 0;
-            for (q = 0; q < N; q = q + 1) last[q] <= 4'hf;
+            for (q = 0; q < N; q = q + 1) begin last[q] <= 4'hf; age[q] <= 0; end
+            s_ok <= 0;
         end else begin
             vs_d <= vsync_n;
             // ---- accumulation (one update per sample, samples 2 clocks apart)
@@ -125,7 +158,8 @@ module digit_reader #(
                 S_IDLE: if (vs_fall) state <= S_SETUP;
                 S_SETUP: begin
                     if (lcnt == 0) begin
-                        slot_count <= 0;
+                        s_ok <= 0;
+                        slot_digit <= {N{4'hf}};
                         state <= S_IDLE;
                     end else begin
                         cur <= lst[(idx + 2'd1 >= lcnt ? 2'd0 : idx + 2'd1) * 38 +: 38];
@@ -184,15 +218,24 @@ module digit_reader #(
                     else bi <= bi + 4'd1;
                 end
                 S_STORE: begin
-                    slot_box[idx*38 +: 38] <= cur;
-                    slot_count <= lcnt;
+                    slot_count <= N;
+                    for (q = 0; q < N; q = q + 1)
+                        if (s_ok[q] && q != ps) begin
+                            if (age[q] >= AGE_MAX) begin
+                                s_ok[q] <= 0; slot_digit[q*4 +: 4] <= 4'hf; last[q] <= 4'hf;
+                            end else age[q] <= age[q] + 4'd1;
+                        end
+                    slot_box[ps*38 +: 38] <= cur;
+                    age[ps] <= 0;
                     // accepted digit, shown once two reads in a row agree
                     begin : decide
                         reg [3:0] dg;
                         dg = (b1 <= DMAX && b2 >= b1 + 7'd2 && c1 != 0) ? c1 : 4'hf;
-                        if (dg == last[idx]) slot_digit[idx*4 +: 4] <= dg;
-                        last[idx] <= dg;
+                        if (s_ok[ps] && dg == last[ps]) slot_digit[ps*4 +: 4] <= dg;
+                        else if (!s_ok[ps]) slot_digit[ps*4 +: 4] <= 4'hf;
+                        last[ps] <= dg;
                     end
+                    s_ok[ps] <= 1'b1;
                     state <= S_SETUP;
                 end
                 default: state <= S_IDLE;
