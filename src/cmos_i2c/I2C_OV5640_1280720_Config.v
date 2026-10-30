@@ -17,7 +17,7 @@ Date			By			Version			Change Description
 module	I2C_OV5640_1280720_Config #(		//1280*720@60 with AutO/Manual Exposure
   parameter IMAGE_WIDTH  = 16'd1280,
             IMAGE_HEIGHT = 16'd720,
-            IMAGE_FLIP   = 8'h40,
+            IMAGE_FLIP   = 8'h41,   // bit0: vertical binning (was 8'h40: rows skipped, thin lines aliased)
             IMAGE_MIRROR = 4'h7,
             SENSOR_TEST_PATTERN = 1'b0,
             CAMERA_SYS_DIV = 8'h21,
