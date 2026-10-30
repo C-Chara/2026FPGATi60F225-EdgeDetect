@@ -1,7 +1,8 @@
 `timescale 1ns/1ps
 
 // Automatic edge threshold: keeps the share of edge pixels in the displayed
-// edge map near TARGET. Every frame the final edge pixels are counted; at
+// edge map near TARGET. Every frame the edge pixels the caller presents
+// (the top level counts only the picture centre) are counted; at
 // VSYNC the threshold moves one step up when there were more than HI edge
 // pixels and one step down when there were fewer than LO (four steps when
 // far outside), within MIN..MAX. Low-contrast scenes (faces, dim light) get
