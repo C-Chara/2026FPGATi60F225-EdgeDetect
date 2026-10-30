@@ -11,6 +11,9 @@
 //   without the median) -> median off + salt/pepper noise -> median on +
 //   noise (the median removes it).
 // A combined press never changes the threshold, mode or freeze.
+// While frozen (K2 long hold) the short presses drive the replay instead:
+// K1 one frame newer (step_newer), K2 one frame older (step_older), K1+K2
+// start/stop the slow-motion playback (play_toggle); one-clock pulses.
 // Automatic threshold (auto_on, set at power-up): the first K1/K2 short
 // press switches to manual, starting from auto_value +/- 1. In manual mode
 // K2 at MIN_THRESHOLD, or a K1+K2 short press, returns to automatic (that
@@ -44,7 +47,10 @@ module key_threshold #(
     output reg [9:0] focus_code,
     output reg [1:0] tnr_mode,
     input  wire [11:0] auto_value,
-    output reg auto_on
+    output reg auto_on,
+    output reg step_newer,
+    output reg step_older,
+    output reg play_toggle
 );
     (* async_reg="true" *) reg [1:0] key_meta,key_sync;
     reg [1:0] stable;
@@ -76,7 +82,9 @@ module key_threshold #(
             tnr_mode<=2'd1;
             auto_on<=1;
             requested_mode<=INITIAL_MODE;mode_active<=INITIAL_MODE;
+            step_newer<=0;step_older<=0;play_toggle<=0;
         end else begin
+            step_newer<=0;step_older<=0;play_toggle<=0;
             key_meta<=key_n;key_sync<=key_meta;
             if(key_sync[0]==stable[0]) count_0<=0;
             else if(count_0==DEBOUNCE_CYCLES-1) begin stable[0]<=key_sync[0];count_0<=0;end
@@ -114,7 +122,9 @@ module key_threshold #(
                 end else hold_count_1<=hold_count_1+1'b1;
             end
             if(release_0 && !long_fired && stable[1] && !press_1) begin
-                if(focus_mode)
+                if(freeze)
+                    step_newer<=1;
+                else if(focus_mode)
                     focus_code<=focus_code>=10'd1023-FOCUS_STEP ? 10'd1023 : focus_code+FOCUS_STEP;
                 else if(auto_on) begin
                     auto_on<=0;
@@ -122,7 +132,9 @@ module key_threshold #(
                 end else
                     requested<=requested>=MAX_THRESHOLD-STEP ? MAX_THRESHOLD : requested+STEP;
             end else if(release_1 && !long_fired_1 && stable[0] && !press_0) begin
-                if(focus_mode)
+                if(freeze)
+                    step_older<=1;
+                else if(focus_mode)
                     focus_code<=focus_code<=FOCUS_STEP ? 10'd0 : focus_code-FOCUS_STEP;
                 else if(auto_on) begin
                     auto_on<=0;
@@ -145,7 +157,8 @@ module key_threshold #(
             end
             // A short combined press steps the median demo when it ends.
             if(!both_pressed && both_d && !combo_long) begin
-                if(!auto_on) auto_on<=1;          // manual: back to automatic
+                if(freeze) play_toggle<=1;
+                else if(!auto_on) auto_on<=1;     // manual: back to automatic
                 else demo_state<=demo_state+2'd1;
             end
             if(!vsync_n) begin

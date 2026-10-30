@@ -47,6 +47,8 @@ ASP_MAX = 740              # aspect <= ~3.5: Qn * 1024 <= Qd * 740
 SYM_SHIFT = 4              # circle/ellipse/square/rect: centroid within 1/16
                            # of the box size from the box centre
 TRI_OFF = 6                # triangle: centroid at least 6/64 off the box centre
+A_TRI = 320                # triangle: area >= 320 (smaller ones were clutter blobs
+                           # - dots, letters - on the clutter page seen from closer)
 # Fill of the bounding box, floor(64 * A / (w * h)): circle ~0.79, ellipse
 # 0.67..0.84, triangle at most 0.5 (+ digitization)
 FILL_CIRCLE = (47, 55)
@@ -257,7 +259,7 @@ def classify(e):
     if aa * K_TRI_MIN <= lhs <= aa * K_TRI_MAX:
         # triangles are not centrally symmetric: centroid off the box centre
         asym = off_x >= (TRI_OFF * wx) >> 6 or off_y >= (TRI_OFF * wy) >> 6
-        if FILL_TRIANGLE[0] <= fill <= FILL_TRIANGLE[1] and asym:
+        if FILL_TRIANGLE[0] <= fill <= FILL_TRIANGLE[1] and asym and A >= A_TRI:
             return CLS_TRIANGLE
     return CLS_NONE
 

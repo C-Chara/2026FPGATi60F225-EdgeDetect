@@ -34,7 +34,19 @@ module axi4_ctrl #(
 			C_TNR_HI_DEAD5 = 3, 
 			C_TNR_HI_TH5   = 8, 
 			C_TNR_HI_DEAD6 = 6, 
-			C_TNR_HI_TH6   = 16
+			C_TNR_HI_TH6   = 16, 
+			
+			//	Frame buffers: 2^C_FRAME_BITS slots of 2^C_BUF_SIZE bytes. The
+			//	writer fills them in turn (skipping the one being displayed),
+			//	so they also hold the last 2^C_FRAME_BITS - 1 frames for replay.
+			C_FRAME_BITS  = 2, 
+			//	1: with TNR, the LSB of every stored pixel's blue channel is
+			//	its motion flag (this pixel differs from the previous stored
+			//	frame by more than C_MOT_TH5 / C_MOT_TH6 in a channel, in a
+			//	word with at least 2 such pixels): frame-difference display.
+			C_MOTION      = 0, 
+			C_MOT_TH5     = 4, 
+			C_MOT_TH6     = 8
 )(
     input  wire                 axi_clk         ,
     input  wire                 axi_reset       ,
@@ -107,7 +119,12 @@ module axi4_ctrl #(
     //	frame, in percent (0..99). With TNR off this is the raw camera
     //	frame-to-frame change. Valid after the first measured frame.
     output reg 	[6:0] 	tnr_change_pct = 0, 
-    output reg 		tnr_change_valid = 0
+    output reg 		tnr_change_valid = 0, 
+
+    //	Replay (any clock, resynchronized): while the writer is stopped
+    //	(frame freeze), each display frame shows the frame replay_back
+    //	frames before the newest stored one. 0 = newest (normal display).
+    input  wire 	[C_FRAME_BITS-1:0] 	replay_back
 );
 	
 	//	The display reader and the previous-frame reader share AR/R. Only
@@ -158,21 +175,31 @@ module axi4_ctrl #(
 	
 	////////////////////////////////////////////////////////////////
 	//	R/W Schedule
-	reg	[1:0] 	rc_wframe_index;
-	reg	[1:0] 	rc_rframe_index;
+	reg	[C_FRAME_BITS-1:0] 	rc_wframe_index;
+	reg	[C_FRAME_BITS-1:0] 	rc_rframe_index;
 
-	//	Use 4 data buffers to simplify control. 
-	wire 	[1:0] 	w_wframe_index_p1 = rc_wframe_index + 1; 
-	wire 	[1:0] 	w_wframe_index_next = (w_wframe_index_p1 == rc_rframe_index) ? rc_wframe_index + 2 : rc_wframe_index + 1; 
+	//	Ring of 2^C_FRAME_BITS buffers; skip the one being displayed.
+	wire 	[C_FRAME_BITS-1:0] 	w_wframe_index_p1 = rc_wframe_index + 1; 
+	wire 	[C_FRAME_BITS-1:0] 	w_wframe_index_next = (w_wframe_index_p1 == rc_rframe_index) ? rc_wframe_index + 2 : rc_wframe_index + 1; 
 
-	reg 	[1:0] 	r_wframe_index_last = 0; 
+	reg 	[C_FRAME_BITS-1:0] 	r_wframe_index_last = 0; 
+	
+	//	replay_back: two-flop sync, taken only when two samples agree.
+	(* async_reg = "true" *) reg 	[C_FRAME_BITS-1:0] 	r_back_meta = 0, r_back_sync = 0; 
+	reg 	[C_FRAME_BITS-1:0] 	r_back_prev = 0, r_back = 0; 
+	always @(posedge axi_clk) begin
+		r_back_meta <= replay_back; 
+		r_back_sync <= r_back_meta; 
+		r_back_prev <= r_back_sync; 
+		if(r_back_prev == r_back_sync) r_back <= r_back_sync; 
+	end
 	
 	reg 			r_wframe_inc = 0, r_rframe_inc = 0; 
 
 	always @(posedge axi_clk) begin
 		if(axi_reset) begin
 			rc_wframe_index <= 2'b0;
-			rc_rframe_index <= 2'd2;
+			rc_rframe_index <= 2;
 			r_wframe_index_last <= 0; 
 			
 		end else begin
@@ -187,8 +214,8 @@ module axi4_ctrl #(
 						r_wframe_index_last <= rc_wframe_index; 
 					end
 				2'b10: begin
-						//	Use r_wframe_index_last. 
-						rc_rframe_index <= r_wframe_index_last; 
+						//	Use r_wframe_index_last (minus the replay offset). 
+						rc_rframe_index <= r_wframe_index_last - r_back; 
 					end
 				2'b11: begin
 						//	Update write & read pointer simutaneously. 
@@ -204,7 +231,7 @@ module axi4_ctrl #(
 	
 	//	The frame finished last (r_wframe_index_last is not updated when
 	//	the reader switches at the same clock).
-	reg 	[1:0] 	r_tnr_prev_index = 0; 
+	reg 	[C_FRAME_BITS-1:0] 	r_tnr_prev_index = 0; 
 	reg 			r_tnr_prev_valid = 0; 
 	always @(posedge axi_clk) begin
 		if(axi_reset) begin
@@ -219,7 +246,7 @@ module axi4_ctrl #(
 	reg 	[16:0] 	rc_ms_tick = 0; 
 	reg 	[7:0] 	rc_latency_ms = 0; 
 	reg 			r_latency_armed = 0; 
-	reg 	[1:0] 	r_latency_index = 0; 
+	reg 	[C_FRAME_BITS-1:0] 	r_latency_index = 0; 
 	always @(posedge axi_clk) begin
 		if(axi_reset) begin
 			rc_ms_tick <= 0; rc_latency_ms <= 0; r_latency_armed <= 0; r_latency_index <= 0; 
@@ -499,10 +526,36 @@ module axi4_ctrl #(
 	reg 	[7:0] 	r_tnr_lfsr = 8'h5a; 
 	wire 			w_tnr_moving = moving_lanes(r_tnr_cur, r_tnr_prev, r_tnr_hi) >= 4'd2; 
 	wire 			w_tnr_leak = (r_tnr_lfsr[3:0] == 4'd0); 
-	wire 	[C_DATA_LEN-1:0] 	w_tnr_out = !r_tnr_en ? r_tnr_cur :
+	wire 	[C_DATA_LEN-1:0] 	w_tnr_filt = !r_tnr_en ? r_tnr_cur :
 		r_tnr_hold ? r_tnr_prev :
 		(w_tnr_moving || r_tnr_left_moving) ? r_tnr_cur :
 		tnr_word(r_tnr_cur, r_tnr_prev, r_tnr_hi, w_tnr_leak); 
+	//	Motion flags in the blue LSBs (see C_MOTION).
+	function mot_lane; 
+		input [15:0] cur, prev; 
+		reg [5:0] dr, dg, db; 
+		begin
+			dr = (cur[15:11] > prev[15:11]) ? cur[15:11] - prev[15:11] : prev[15:11] - cur[15:11]; 
+			dg = (cur[10:5] > prev[10:5]) ? cur[10:5] - prev[10:5] : prev[10:5] - cur[10:5]; 
+			db = (cur[4:1] > prev[4:1]) ? {cur[4:1] - prev[4:1], 1'b0} : {prev[4:1] - cur[4:1], 1'b0}; 
+			mot_lane = (dr > C_MOT_TH5) || (dg > C_MOT_TH6) || (db > C_MOT_TH5); 
+		end
+	endfunction
+	reg 	[C_DATA_LEN/16-1:0] 	w_mot; 
+	reg 	[3:0] 	w_mot_n; 
+	reg 	[C_DATA_LEN-1:0] 	w_tnr_out; 
+	integer mk; 
+	always @* begin
+		w_mot_n = 0; 
+		for(mk = 0; mk < C_DATA_LEN / 16; mk = mk + 1) begin
+			w_mot[mk] = r_tnr_en && mot_lane(r_tnr_cur[16*mk +: 16], r_tnr_prev[16*mk +: 16]); 
+			w_mot_n = w_mot_n + w_mot[mk]; 
+		end
+		w_tnr_out = w_tnr_filt; 
+		if(C_MOTION)
+			for(mk = 0; mk < C_DATA_LEN / 16; mk = mk + 1)
+				w_tnr_out[16*mk] = w_mot[mk] && (w_mot_n >= 4'd2); 
+	end
 	always @(posedge axi_clk) begin
 		if(r_tnr_v) begin
 			r_tnr_left_moving <= w_tnr_moving; 
