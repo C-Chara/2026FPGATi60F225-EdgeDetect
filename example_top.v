@@ -1052,7 +1052,9 @@ module example_top
 	raw_demosaic #(.H_ACTIVE(1280)) u_raw_demosaic (
 		.clk(w_cmos_pclk), .rst_n(rstn_sys), .frame_valid(cmos_frame_vsync),
 		.de(cmos_frame_href), .raw(cmos_frame_Gray[7:0]), .phase(bayer_phase_sync),
-		.gamma_on(1'b1), .de_out(raw_de), .rgb565(raw_rgb565), .gain_r(), .gain_b()
+		// The OV5640 already applies its raw gamma (0x5000 bit 5) before the
+		// ISP RAW output; a second 1/2.2 gamma here washed the picture out.
+		.gamma_on(1'b0), .de_out(raw_de), .rgb565(raw_rgb565), .gain_r(), .gain_b()
 	);
 	wire cam_pixel_en = CAMERA_60FPS_RAW ? raw_de : cmos_frame_href;
 	wire [15:0] cam_pixel16 = CAMERA_60FPS_RAW ? raw_rgb565 : y8_rgb565;

@@ -188,7 +188,7 @@
         <efx:param name="active_capture_clk_edge" value="negedge" value_type="e_option" />
         <efx:param name="release_tri_then_reset" value="on" value_type="e_bool" />
         <efx:param name="enable_external_master_clock" value="off" value_type="e_bool" />
-        <efx:param name="jtag_usercode" value="0x2026104d" value_type="e_string" />
+        <efx:param name="jtag_usercode" value="0x2026104e" value_type="e_string" />
         <efx:param name="generate_bit" value="on" value_type="e_bool" />
         <efx:param name="generate_bitbin" value="on" value_type="e_bool" />
         <efx:param name="generate_hex" value="on" value_type="e_bool" />
