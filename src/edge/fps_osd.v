@@ -42,7 +42,7 @@ module fps_osd #(
     input wire [11:0] flicker,
     input wire frozen,
     input wire playing,
-    input wire [6:0] replay_back,
+    input wire [7:0] replay_back,
     output wire [23:0] rgb_out
 );
     reg [10:0] x = 0;
@@ -189,8 +189,9 @@ module fps_osd #(
         end
     endfunction
 
-    wire [1:0] back_hundreds = replay_back >= 7'd100 ? 2'd1 : 2'd0;
-    wire [6:0] back_rem = replay_back >= 7'd100 ? replay_back - 7'd100 : replay_back;
+    wire [1:0] back_hundreds = replay_back >= 8'd200 ? 2'd2 : replay_back >= 8'd100 ? 2'd1 : 2'd0;
+    wire [6:0] back_rem = replay_back >= 8'd200 ? replay_back - 8'd200 :
+                          replay_back >= 8'd100 ? replay_back - 8'd100 : replay_back;
     wire [3:0] back_tens = back_rem / 7'd10, back_ones = back_rem % 7'd10;
     // Rows are 22 pixels tall on a 26-pixel pitch, starting at y = 16.
     wire [9:0] rel_row_y = y - 10'd16;

@@ -967,7 +967,7 @@ module example_top
 	// The switch happens on the VSYNC falling edge that axi4_ctrl treats as
 	// end of frame, so the reader keeps showing the last complete frame.
 	wire frame_freeze;
-	reg [6:0] replay_back = 0;	// replay: frames before the newest (see key_threshold)
+	reg [7:0] replay_back = 0;	// replay: frames before the newest (see key_threshold)
 	(* async_reg = "true" *) reg [1:0] freeze_sync = 0;
 	reg freeze_vsync_d = 0, freeze_active = 0;
 	always @(posedge w_cmos_pclk) begin
@@ -1060,7 +1060,7 @@ module example_top
 	wire cam_pixel_en = CAMERA_60FPS_RAW ? raw_de : cmos_frame_href;
 	wire [15:0] cam_pixel16 = CAMERA_60FPS_RAW ? raw_rgb565 : y8_rgb565;
 	axi4_ctrl #(.C_RD_END_ADDR(1280 * 2 * 720), .C_W_WIDTH(CAMERA_60FPS ? 16 : CSI_DATA_WIDTH), .C_R_WIDTH(16), .C_ID_LEN(4),
-		.C_TNR(TNR_ENABLE), .C_BUF_SIZE(21), .C_FRAME_BITS(7), .C_MOTION(1)) u_axi4_ctrl (
+		.C_TNR(TNR_ENABLE), .C_BUF_SIZE(21), .C_FRAME_BITS(8), .C_MOTION(1)) u_axi4_ctrl (
 
 		.axi_clk        (w_ddr3_ui_clk            ),
 		.axi_reset      (w_ddr3_ui_rst            ),
@@ -1206,11 +1206,11 @@ module example_top
 		.auto_value(auto_threshold), .auto_on(threshold_auto),
 		.step_newer(replay_newer), .step_older(replay_older), .play_toggle(replay_play)
 	);
-	// Replay: axi4_ctrl keeps the last 127 frames (about 2.1 s) in a DDR
-	// ring. While frozen the display shows the frame replay_back frames
+	// Replay: axi4_ctrl keeps the last 255 frames (about 4.2 s) in a DDR
+	// ring of 256 x 2 MB (the whole 512 MB DDR3, K4B4G1646E). While frozen the display shows the frame replay_back frames
 	// before the newest; K1/K2 step it, K1+K2 plays the stored frames from
 	// the oldest to the newest at 1/REPLAY_SLOW speed, looping.
-	localparam [6:0] REPLAY_OLDEST = 7'd126;
+	localparam [7:0] REPLAY_OLDEST = 8'd254;
 	localparam [2:0] REPLAY_SLOW = 3'd4;
 	wire replay_newer, replay_older, replay_play;
 
@@ -1229,14 +1229,14 @@ module example_top
 				if (!replay_playing) begin replay_back <= REPLAY_OLDEST; replay_div <= 0; end
 			end else if (replay_older) begin
 				replay_playing <= 0;
-				if (replay_back != REPLAY_OLDEST) replay_back <= replay_back + 7'd1;
+				if (replay_back != REPLAY_OLDEST) replay_back <= replay_back + 8'd1;
 			end else if (replay_newer) begin
 				replay_playing <= 0;
-				if (replay_back != 0) replay_back <= replay_back - 7'd1;
+				if (replay_back != 0) replay_back <= replay_back - 8'd1;
 			end else if (replay_playing && replay_vs_d && !lcd_vs) begin
 				if (replay_div == REPLAY_SLOW - 3'd1) begin
 					replay_div <= 0;
-					replay_back <= (replay_back == 0) ? REPLAY_OLDEST : replay_back - 7'd1;
+					replay_back <= (replay_back == 0) ? REPLAY_OLDEST : replay_back - 8'd1;
 				end else replay_div <= replay_div + 3'd1;
 			end
 		end
