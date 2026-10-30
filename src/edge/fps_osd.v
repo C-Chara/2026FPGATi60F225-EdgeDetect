@@ -17,7 +17,9 @@ module fps_osd #(
     // 0 hides the FOC line and moves the lines below it up.
     parameter SHOW_FOCUS = 1'b1,
     // 1: the MED line shows 'PHS n' (Bayer phase, colour test build).
-    parameter SHOW_PHASE = 1'b0
+    parameter SHOW_PHASE = 1'b0,
+    // 1: only FPS, THR, MED, REC (and NOISE while on), for the demo video.
+    parameter COMPACT = 1'b0
 )(
     input wire clk, rst_n, vs, de,
     input wire [23:0] rgb_in,
@@ -183,7 +185,10 @@ module fps_osd #(
     // Rows are 22 pixels tall on a 26-pixel pitch, starting at y = 16.
     wire [9:0] rel_row_y = y - 10'd16;
     wire [4:0] screen_row = rel_row_y / 26;
-    wire [4:0] row = (SHOW_FOCUS || screen_row < 5'd4) ? screen_row : screen_row + 5'd1;
+    wire [4:0] row = COMPACT ? (screen_row == 5'd0 ? 5'd0 : screen_row == 5'd1 ? 5'd3 :
+                                screen_row == 5'd2 ? 5'd5 : screen_row == 5'd3 ? 5'd7 :
+                                screen_row == 5'd4 ? 5'd10 : 5'd31) :
+                     (SHOW_FOCUS || screen_row < 5'd4) ? screen_row : screen_row + 5'd1;
     wire [4:0] row_y = rel_row_y % 26;
     wire [3:0] row_letters = (row == 5'd3 || row == 5'd4) ? 4'd8 :
                              (row == 5'd5) ? ((SHOW_PHASE || median_on) ? 4'd6 : 4'd7) :

@@ -1192,7 +1192,7 @@ module example_top
 	// The OV5640 module has a manually screwed lens: its VCM sink is not
 	// connected to a focus motor, so the run-time focus control is off.
 	localparam FOCUS_CONTROL_ENABLE = 1'b0;
-	key_threshold #(.INITIAL_THRESHOLD(EDGE_THRESHOLD), .LAST_MODE(3'd4),
+	key_threshold #(.INITIAL_THRESHOLD(EDGE_THRESHOLD), .LAST_MODE(3'd3),
 		.FOCUS_ENABLE(FOCUS_CONTROL_ENABLE)) u_key_threshold (
 		.clk(clk_pixel), .rst_n(rstn_pixel), .vsync_n(lcd_vs),
 		.key_n(key_n), .threshold_active(manual_threshold), .threshold_requested(),
@@ -1555,7 +1555,7 @@ module example_top
 		end
 	end
 	fps_osd #(.SHOW_FOCUS(FOCUS_CONTROL_ENABLE),
-		.SHOW_PHASE(CAMERA_60FPS_RAW && BAYER_PHASE_FROM_KEYS)) u_fps_osd (
+		.SHOW_PHASE(CAMERA_60FPS_RAW && BAYER_PHASE_FROM_KEYS), .COMPACT(1'b1)) u_fps_osd (
 		.clk(clk_pixel), .rst_n(rstn_pixel), .vs(edge_vs), .de(edge_de),
 		.rgb_in(edge_rgb), .fps_bcd(camera_fps_bcd), .fps_valid(camera_fps_valid),
 		.threshold_in(edge_threshold_active), .threshold_auto(threshold_auto),
@@ -1576,7 +1576,7 @@ module example_top
 	//    rectangle (circle_geometry_detector).
 	localparam SHAPE_DETECTOR = 1'b1;
 	localparam SHAPE_TRACKER = 1'b1;
-	localparam SHAPE_DEBUG_OSD = 1'b1;
+	localparam SHAPE_DEBUG_OSD = 1'b0;
 	localparam SHAPE_DIGITS = 1'b1;
 	wire [23:0] shape_rgb;
 	wire shape_vs, shape_hs, shape_de;
