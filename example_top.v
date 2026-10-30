@@ -1359,17 +1359,19 @@ module example_top
         // of comparable strength is suppressed instead of replacing it.
         // It also replaces the same-pixel confirmation, which let every
         // second 60 Hz frame through unfiltered with the 30 fps camera.
-        // A line is released below a quarter of the threshold and must stay
-        // within 1/4 of its gradient-direction peak; an isolated new pixel
-        // needs the full threshold.
+        // A line is released below half the threshold and must stay within
+        // 1/8 of its gradient-direction peak; an isolated new pixel needs the
+        // full threshold. (Was 1/4 and 1/4 until 2026-10-30: weak motion-blur
+        // gradients were held frame after frame and left trails behind a
+        // moving hand; board test of variants A-D, D chosen.)
         edge_temporal_sticky #(.H_ACTIVE(1276), .V_ACTIVE(720),
-            .TOLERANCE_SHIFT(2), .HOLD_ENABLE(EDGE_HOLD_ENABLE)) u_edge_temporal_sticky (
+            .TOLERANCE_SHIFT(3), .HOLD_ENABLE(EDGE_HOLD_ENABLE)) u_edge_temporal_sticky (
             .clk(clk_pixel), .rst_n(rstn_pixel), .vsync_n(lcd_vs),
             .pixel_valid(hysteresis_valid), .edge_in(hysteresis_edge),
             .gray_in(hysteresis_gray), .magnitude_in(magnitude_d2),
             .neighbor_a_in(neighbor_a_d2), .neighbor_b_in(neighbor_b_d2),
             .direction_in(circle_dir_d2),
-            .release_threshold_in(edge_low_threshold >> 1),
+            .release_threshold_in(edge_low_threshold),
             .onset_threshold_in(edge_threshold_active),
             .edge_out(stable_edge), .gray_out(stable_gray),
             .direction_out(stable_direction), .toggle_out(edge_toggle)
