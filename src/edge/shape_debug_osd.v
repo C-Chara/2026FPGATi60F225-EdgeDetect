@@ -5,7 +5,7 @@
 //   TRK nn     objects shown after cross-frame voting
 //   ARE nnnnn  area (samples, 640x360 grid) of the largest candidate
 //   RHO nnn    100 x its mean gray / mean of its surroundings
-//   PER nnn    100 x (runs + top edges) / (width + height), readout only
+//   EDG nnnnn  edge pixels in the last displayed frame (automatic threshold)
 //   MOM nnn    J^2 * 2^16 (circle/ellipse 415, rectangle 455, triangle 607)
 //   FIL nn     box fill x 64 (circle 50)
 //   ERR nnn    reject bits (shape_detector dbg_why), 0 = accepted
@@ -15,7 +15,8 @@ module shape_debug_osd (
     input  wire [23:0] rgb_in,
     input  wire [5:0]  det_count, trk_count,
     input  wire [17:0] area,
-    input  wire [9:0]  rho, cvx, mom,
+    input  wire [9:0]  rho, mom,
+    input  wire [19:0] edges,
     input  wire [6:0]  fill, why,
     output wire [23:0] rgb_out
 );
@@ -45,7 +46,7 @@ module shape_debug_osd (
             3'd1: value = {11'd0, trk_count};
             3'd2: value = area_clip;
             3'd3: value = {7'd0, rho};
-            3'd4: value = {7'd0, cvx};
+            3'd4: value = (edges > 20'd99999) ? 17'd99999 : edges[16:0];
             3'd5: value = {7'd0, mom};
             3'd6: value = {10'd0, fill};
             default: value = {10'd0, why};
@@ -83,7 +84,7 @@ module shape_debug_osd (
 
     localparam [4:0] G_F=10, G_P=11, G_S=12, G_T=13, G_H=14, G_R=15,
                      G_O=16, G_E=17, G_D=18, G_A=19, G_M=20, G_K=21,
-                     G_I=22, G_L=23, G_BLANK=31;
+                     G_I=22, G_L=23, G_G=24, G_BLANK=31;
     function [34:0] glyph;
         input [4:0] n;
         case (n)
@@ -111,6 +112,7 @@ module shape_debug_osd (
             G_K:glyph=35'b10001_10010_10100_11000_10100_10010_10001;
             G_I:glyph=35'b01110_00100_00100_00100_00100_00100_01110;
             G_L:glyph=35'b10000_10000_10000_10000_10000_10000_11111;
+            G_G:glyph=35'b01110_10001_10000_10111_10001_10001_01111;
             default:glyph=0;
         endcase
     endfunction
@@ -133,7 +135,7 @@ module shape_debug_osd (
             4'd1: begin n0 = G_T; n1 = G_R; n2 = G_K; ndig = 2; end
             4'd2: begin n0 = G_A; n1 = G_R; n2 = G_E; ndig = 5; end
             4'd3: begin n0 = G_R; n1 = G_H; n2 = G_O; ndig = 3; end
-            4'd4: begin n0 = G_P; n1 = G_E; n2 = G_R; ndig = 3; end
+            4'd4: begin n0 = G_E; n1 = G_D; n2 = G_G; ndig = 5; end
             4'd5: begin n0 = G_M; n1 = G_O; n2 = G_M; ndig = 3; end
             4'd6: begin n0 = G_F; n1 = G_I; n2 = G_L; ndig = 2; end
             default: begin n0 = G_E; n1 = G_R; n2 = G_R; ndig = 3; end

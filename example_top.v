@@ -1166,7 +1166,12 @@ module example_top
 	wire [23:0] edge_rgb, edge_fps_rgb;
 	wire [7:0] camera_fps_bcd;
 	wire camera_fps_valid;
-	wire [11:0] edge_threshold_active;
+	wire [11:0] edge_threshold_active, manual_threshold, auto_threshold;
+	wire threshold_auto;
+	wire [19:0] edge_count;
+	// Automatic threshold at power-up (edge_auto_threshold keeps about 2-3 %
+	// of the pixels as edges); K1/K2 switch to manual, see key_threshold.
+	assign edge_threshold_active = threshold_auto ? auto_threshold : manual_threshold;
 	wire [2:0] edge_mode_active;
 	wire median_on, noise_on, focus_mode;
 	wire median_key_on, noise_key_on;
@@ -1188,12 +1193,13 @@ module example_top
 	key_threshold #(.INITIAL_THRESHOLD(EDGE_THRESHOLD), .LAST_MODE(3'd4),
 		.FOCUS_ENABLE(FOCUS_CONTROL_ENABLE)) u_key_threshold (
 		.clk(clk_pixel), .rst_n(rstn_pixel), .vsync_n(lcd_vs),
-		.key_n(key_n), .threshold_active(edge_threshold_active), .threshold_requested(),
+		.key_n(key_n), .threshold_active(manual_threshold), .threshold_requested(),
 		.mode_active(edge_mode_active), .mode_requested(),
 		.freeze(frame_freeze),
 		.median_on(median_key_on), .noise_on(noise_key_on),
 		.focus_mode(focus_mode), .focus_code(focus_code_pixel),
-		.tnr_mode(tnr_key_mode)
+		.tnr_mode(tnr_key_mode),
+		.auto_value(auto_threshold), .auto_on(threshold_auto)
 	);
 	// Smooth grayscale with a 3x3 median (and optionally a 3x3 Gaussian),
 	// then use Sobel + NMS before hysteresis linking. NMS keeps only the
@@ -1504,6 +1510,11 @@ module example_top
 			change_valid_pixel <= change_sync[7];
 		end
 	end
+	edge_auto_threshold #(.INITIAL(EDGE_THRESHOLD)) u_edge_auto_threshold (
+		.clk(clk_pixel), .rst_n(rstn_pixel), .vs(lcd_vs),
+		.edge_pix(final_edge && aligned_rgb_valid),
+		.threshold(auto_threshold), .edge_count(edge_count)
+	);
 	// Edge flicker: toggled edge pixels summed over 60 display frames
 	// (about one second, 30 camera frames), shown per camera frame (/32).
 	reg [19:0] flk_frame = 0;
@@ -1532,7 +1543,7 @@ module example_top
 		.SHOW_PHASE(CAMERA_60FPS_RAW && BAYER_PHASE_FROM_KEYS)) u_fps_osd (
 		.clk(clk_pixel), .rst_n(rstn_pixel), .vs(edge_vs), .de(edge_de),
 		.rgb_in(edge_rgb), .fps_bcd(camera_fps_bcd), .fps_valid(camera_fps_valid),
-		.threshold_in(edge_threshold_active),
+		.threshold_in(edge_threshold_active), .threshold_auto(threshold_auto),
 		.latency_ms(frame_latency_pixel), .latency_valid(frame_latency_pixel_valid),
 		.median_on(median_on), .noise_on(noise_on), .tnr_mode(tnr_mode),
 		.recognition_on(recognition_on), .bayer_phase(bayer_phase_cnt),
@@ -1584,7 +1595,7 @@ module example_top
 				.clk(clk_pixel), .rst_n(rstn_pixel), .vs(lcd_vs), .de(lcd_de),
 				.enable(recognition_on), .rgb_in(FPS_OSD_ENABLE ? edge_fps_rgb : edge_rgb),
 				.det_count(detected_count), .trk_count(shape_count),
-				.area(dbg_area), .rho(dbg_rho), .cvx(dbg_cvx), .mom(dbg_j),
+				.area(dbg_area), .rho(dbg_rho), .mom(dbg_j), .edges(edge_count),
 				.fill(dbg_fill), .why(dbg_why), .rgb_out(shape_osd_rgb)
 			);
 		end else begin: no_readout

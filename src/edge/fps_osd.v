@@ -5,7 +5,7 @@
 //   OUT dd    processed/displayed frames per second (output VSYNC)
 //   LAT dd    milliseconds from the end of a camera frame in DDR to the
 //             start of its first display frame ("--" until measured)
-//   THR dddd  edge threshold
+//   THR dddd  edge threshold (THR Addd: automatic threshold)
 //   FOC dddd  lens focus code (yellow while K1/K2 adjust focus)
 //   MED ON / MED OFF, TNR ON / HI / HLD / OFF (temporal noise reduction),
 //   REC ON / REC OFF  shape recognition (circle / rectangle labels)
@@ -24,6 +24,7 @@ module fps_osd #(
     input wire [7:0] fps_bcd,
     input wire fps_valid,
     input wire [11:0] threshold_in,
+    input wire threshold_auto,
     input wire [7:0] latency_ms,
     input wire latency_valid,
     input wire median_on,
@@ -220,7 +221,7 @@ module fps_osd #(
             endcase
             5'd3: case(letter)
                 0:symbol=G_T; 1:symbol=G_H; 2:symbol=G_R;
-                4:symbol={1'b0,threshold_bcd[15:12]};
+                4:symbol=threshold_auto ? G_A : {1'b0,threshold_bcd[15:12]};
                 5:symbol={1'b0,threshold_bcd[11:8]};
                 6:symbol={1'b0,threshold_bcd[7:4]};
                 7:symbol={1'b0,threshold_bcd[3:0]};
