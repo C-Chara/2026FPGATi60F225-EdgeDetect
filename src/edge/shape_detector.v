@@ -31,6 +31,7 @@ module shape_detector #(
     parameter integer A_MAX = 100000,
     parameter LOCAL_THR = 1'b1,          // 0: one threshold for the whole frame
     parameter integer A_DIG = 60,        // digit candidates may be smaller
+    parameter integer A_TRI = 320,       // triangles: small ones are clutter (dots, letters)
     parameter integer MAX_DIGITS = 4
 )(
     input  wire        clk,
@@ -568,7 +569,7 @@ module shape_detector #(
                                  rounder ? CLS_CIRCLE : CLS_ELLIPSE) :
         (j2 >= K_RECT_MIN && j2 <= K_RECT_MAX) ? (!centred ? CLS_NONE :
                                  rounder ? CLS_SQUARE : CLS_RECT) :
-        (j2 >= K_TRI_MIN && j2 <= K_TRI_MAX && tri_asym && fill_t) ? CLS_TRIANGLE : CLS_NONE;
+        (j2 >= K_TRI_MIN && j2 <= K_TRI_MAX && tri_asym && fill_t && cA >= A_TRI) ? CLS_TRIANGLE : CLS_NONE;
     // Digit candidate box: height >= 12, 1.25 <= h/w <= 6
     wire [10:0] cb_w = cbox[27:18] - cbox[37:28] + 11'd1;
     wire [10:0] cb_h = cbox[8:0] - cbox[17:9] + 11'd1;

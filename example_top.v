@@ -967,6 +967,7 @@ module example_top
 	// The switch happens on the VSYNC falling edge that axi4_ctrl treats as
 	// end of frame, so the reader keeps showing the last complete frame.
 	wire frame_freeze;
+	reg [6:0] replay_back = 0;	// replay: frames before the newest (see key_threshold)
 	(* async_reg = "true" *) reg [1:0] freeze_sync = 0;
 	reg freeze_vsync_d = 0, freeze_active = 0;
 	always @(posedge w_cmos_pclk) begin
@@ -1059,7 +1060,7 @@ module example_top
 	wire cam_pixel_en = CAMERA_60FPS_RAW ? raw_de : cmos_frame_href;
 	wire [15:0] cam_pixel16 = CAMERA_60FPS_RAW ? raw_rgb565 : y8_rgb565;
 	axi4_ctrl #(.C_RD_END_ADDR(1280 * 2 * 720), .C_W_WIDTH(CAMERA_60FPS ? 16 : CSI_DATA_WIDTH), .C_R_WIDTH(16), .C_ID_LEN(4),
-		.C_TNR(TNR_ENABLE)) u_axi4_ctrl (
+		.C_TNR(TNR_ENABLE), .C_BUF_SIZE(21), .C_FRAME_BITS(7), .C_MOTION(1)) u_axi4_ctrl (
 
 		.axi_clk        (w_ddr3_ui_clk            ),
 		.axi_reset      (w_ddr3_ui_rst            ),
@@ -1107,7 +1108,8 @@ module example_top
 		.frame_latency_valid (w_frame_latency_valid),
 		.tnr_mode (tnr_mode),
 		.tnr_change_pct (w_tnr_change_pct),
-		.tnr_change_valid (w_tnr_change_valid)
+		.tnr_change_valid (w_tnr_change_valid),
+		.replay_back (replay_back)
 	);
 	assign led_o[3:0] = w_axi_tp; 
 	assign led_o[4] = frame_freeze;
@@ -1192,7 +1194,7 @@ module example_top
 	// The OV5640 module has a manually screwed lens: its VCM sink is not
 	// connected to a focus motor, so the run-time focus control is off.
 	localparam FOCUS_CONTROL_ENABLE = 1'b0;
-	key_threshold #(.INITIAL_THRESHOLD(EDGE_THRESHOLD), .LAST_MODE(3'd3),
+	key_threshold #(.INITIAL_THRESHOLD(EDGE_THRESHOLD), .LAST_MODE(3'd4), .STEP(12'd8),
 		.FOCUS_ENABLE(FOCUS_CONTROL_ENABLE)) u_key_threshold (
 		.clk(clk_pixel), .rst_n(rstn_pixel), .vsync_n(lcd_vs),
 		.key_n(key_n), .threshold_active(manual_threshold), .threshold_requested(),
@@ -1201,8 +1203,44 @@ module example_top
 		.median_on(median_key_on), .noise_on(noise_key_on),
 		.focus_mode(focus_mode), .focus_code(focus_code_pixel),
 		.tnr_mode(tnr_key_mode),
-		.auto_value(auto_threshold), .auto_on(threshold_auto)
+		.auto_value(auto_threshold), .auto_on(threshold_auto),
+		.step_newer(replay_newer), .step_older(replay_older), .play_toggle(replay_play)
 	);
+	// Replay: axi4_ctrl keeps the last 127 frames (about 2.1 s) in a DDR
+	// ring. While frozen the display shows the frame replay_back frames
+	// before the newest; K1/K2 step it, K1+K2 plays the stored frames from
+	// the oldest to the newest at 1/REPLAY_SLOW speed, looping.
+	localparam [6:0] REPLAY_OLDEST = 7'd126;
+	localparam [2:0] REPLAY_SLOW = 3'd4;
+	wire replay_newer, replay_older, replay_play;
+
+	reg replay_playing = 0;
+	reg [2:0] replay_div = 0;
+	reg replay_vs_d = 1;
+	always @(posedge clk_pixel or negedge rstn_pixel) begin
+		if (!rstn_pixel) begin
+			replay_back <= 0; replay_playing <= 0; replay_div <= 0; replay_vs_d <= 1;
+		end else begin
+			replay_vs_d <= lcd_vs;
+			if (!frame_freeze) begin
+				replay_back <= 0; replay_playing <= 0;
+			end else if (replay_play) begin
+				replay_playing <= !replay_playing;
+				if (!replay_playing) begin replay_back <= REPLAY_OLDEST; replay_div <= 0; end
+			end else if (replay_older) begin
+				replay_playing <= 0;
+				if (replay_back != REPLAY_OLDEST) replay_back <= replay_back + 7'd1;
+			end else if (replay_newer) begin
+				replay_playing <= 0;
+				if (replay_back != 0) replay_back <= replay_back - 7'd1;
+			end else if (replay_playing && replay_vs_d && !lcd_vs) begin
+				if (replay_div == REPLAY_SLOW - 3'd1) begin
+					replay_div <= 0;
+					replay_back <= (replay_back == 0) ? REPLAY_OLDEST : replay_back - 7'd1;
+				end else replay_div <= replay_div + 3'd1;
+			end
+		end
+	end
 	// Smooth grayscale with a 3x3 median (and optionally a 3x3 Gaussian),
 	// then use Sobel + NMS before hysteresis linking. NMS keeps only the
 	// local maximum along the gradient direction, removing the broad
@@ -1219,7 +1257,9 @@ module example_top
 		(noise_lfsr[7:1] == 7'd0) ? 16'hffff :
 		(noise_lfsr[7:1] == 7'd1) ? 16'h0000 : camera_rgb565;
 	wire [7:0] gray_pixel;
-	rgb565_gray u_rgb565_gray (.rgb565(source_rgb565), .gray(gray_pixel));
+	// The blue LSB of a stored pixel is its motion flag (axi4_ctrl
+	// C_MOTION); the edge chain sees it as 0.
+	rgb565_gray u_rgb565_gray (.rgb565({source_rgb565[15:1], 1'b0}), .gray(gray_pixel));
 	wire [7:0] filtered_pixel, filtered_center;
 	wire filtered_valid, filtered_vs;
 	wire [7:0] median_pixel;
@@ -1441,9 +1481,9 @@ module example_top
 	// Mode 1: black background + white edges.
 	// Mode 2: original colour background + red edges.
 	// Mode 3: split screen, original grayscale left, binary edges right.
-	// Mode 4: Sobel gradient magnitude |Gx|+|Gy| as grayscale with a soft
-	//         threshold (black below THR/2), no binary decision: the
-	//         plain-Sobel display for comparison.
+	// Mode 4: frame difference: pixels that changed since the previous
+	//         camera frame (motion flag) in red over the dimmed picture,
+	//         edges white (static) or yellow (moving).
 	// With the Gaussian stage the gray sideband is the median output, so
 	// take the unfiltered background from the aligned colour pixel instead.
 	wire [7:0] aligned_gray;
@@ -1468,9 +1508,13 @@ module example_top
 	wire [7:0] magnitude_gray = (magnitude_excess > 13'd255) ? 8'hff : magnitude_excess[7:0];
 	wire [23:0] magnitude_rgb = !hysteresis_valid ? 24'h000000 :
 		{magnitude_gray, magnitude_gray, magnitude_gray};
+	wire motion_flag = aligned_rgb565[0];
+	wire [23:0] motion_rgb = final_edge ? (motion_flag ? 24'hffff00 : 24'hffffff) :
+		motion_flag ? {8'hd0, 2'b00, background_gray[7:2], 2'b00, background_gray[7:2]} :
+		{1'b0, background_gray[7:1], 1'b0, background_gray[7:1], 1'b0, background_gray[7:1]};
 	wire [23:0] selected_overlay_rgb =
-		(edge_mode_active == 3'd4) ? magnitude_rgb :
 		!aligned_rgb_valid ? 24'h000000 :
+		(edge_mode_active == 3'd4) ? motion_rgb :
 		(edge_mode_active == 3'd0) ? gray_overlay_rgb :
 		(edge_mode_active == 3'd1) ? black_overlay_rgb :
 		(edge_mode_active == 3'd2) ? color_overlay_rgb : split_rgb;
@@ -1564,6 +1608,7 @@ module example_top
 		.recognition_on(recognition_on), .bayer_phase(bayer_phase_cnt),
 		.change_pct(change_pct_pixel), .change_valid(change_valid_pixel),
 		.flicker(flk_value),
+		.frozen(frame_freeze), .playing(replay_playing), .replay_back(replay_back),
 		.focus_code(focus_code_pixel), .focus_mode(focus_mode),
 		.rgb_out(edge_fps_rgb)
 	);

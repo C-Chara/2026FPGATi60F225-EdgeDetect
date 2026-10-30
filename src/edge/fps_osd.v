@@ -18,7 +18,8 @@ module fps_osd #(
     parameter SHOW_FOCUS = 1'b1,
     // 1: the MED line shows 'PHS n' (Bayer phase, colour test build).
     parameter SHOW_PHASE = 1'b0,
-    // 1: only FPS, THR, MED, REC (and NOISE while on), for the demo video.
+    // 1: only FPS, THR, MED, REC, the replay line FRZ -nnn / PLY -nnn
+    //    (frames before the newest, while frozen) and NOISE (while on).
     parameter COMPACT = 1'b0
 )(
     input wire clk, rst_n, vs, de,
@@ -39,6 +40,9 @@ module fps_osd #(
     input wire [6:0] change_pct,
     input wire change_valid,
     input wire [11:0] flicker,
+    input wire frozen,
+    input wire playing,
+    input wire [6:0] replay_back,
     output wire [23:0] rgb_out
 );
     reg [10:0] x = 0;
@@ -143,6 +147,7 @@ module fps_osd #(
     localparam [4:0] G_F=10, G_P=11, G_S=12, G_T=13, G_H=14, G_R=15,
                      G_O=16, G_U=17, G_L=18, G_A=19, G_M=20, G_E=21,
                      G_D=22, G_N=23, G_I=24, G_DASH=25, G_C=26, G_K=27, G_G=28,
+                     G_Z=29, G_Y=30,
                      G_BLANK=31;
     function [34:0] glyph;
         input [4:0] n;
@@ -177,27 +182,32 @@ module fps_osd #(
                 G_DASH:glyph=35'b00000_00000_00000_11111_00000_00000_00000;
                 G_K:glyph=35'b10001_10010_10100_11000_10100_10010_10001;
                 G_G:glyph=35'b01110_10001_10000_10111_10001_10001_01111;
+                G_Z:glyph=35'b11111_00001_00010_00100_01000_10000_11111;
+                G_Y:glyph=35'b10001_10001_01010_00100_00100_00100_00100;
                 default:glyph=0;
             endcase
         end
     endfunction
 
+    wire [1:0] back_hundreds = replay_back >= 7'd100 ? 2'd1 : 2'd0;
+    wire [6:0] back_rem = replay_back >= 7'd100 ? replay_back - 7'd100 : replay_back;
+    wire [3:0] back_tens = back_rem / 7'd10, back_ones = back_rem % 7'd10;
     // Rows are 22 pixels tall on a 26-pixel pitch, starting at y = 16.
     wire [9:0] rel_row_y = y - 10'd16;
     wire [4:0] screen_row = rel_row_y / 26;
     wire [4:0] row = COMPACT ? (screen_row == 5'd0 ? 5'd0 : screen_row == 5'd1 ? 5'd3 :
                                 screen_row == 5'd2 ? 5'd5 : screen_row == 5'd3 ? 5'd7 :
-                                screen_row == 5'd4 ? 5'd10 : 5'd31) :
+                                screen_row == 5'd4 ? 5'd11 : screen_row == 5'd5 ? 5'd10 : 5'd31) :
                      (SHOW_FOCUS || screen_row < 5'd4) ? screen_row : screen_row + 5'd1;
     wire [4:0] row_y = rel_row_y % 26;
     wire [3:0] row_letters = (row == 5'd3 || row == 5'd4) ? 4'd8 :
                              (row == 5'd5) ? ((SHOW_PHASE || median_on) ? 4'd6 : 4'd7) :
                              (row == 5'd6) ? (tnr_mode == 2'd1 || tnr_mode == 2'd2 ? 4'd6 : 4'd7) :
                              (row == 5'd7) ? (recognition_on ? 4'd6 : 4'd7) :
-                             (row == 5'd9 || row == 5'd10) ? 4'd8 : 4'd6;
-    wire row_shown = (row <= 5'd9) || (row == 5'd10 && noise_on);
+                             (row == 5'd9 || row == 5'd10 || row == 5'd11) ? 4'd8 : 4'd6;
+    wire row_shown = (row <= 5'd9) || (row == 5'd10 && noise_on) || (row == 5'd11 && frozen);
     wire [10:0] rel_x = x - 11'd16;
-    wire box = de && y >= 10'd16 && row <= 5'd10 && row_shown && row_y < 5'd22 &&
+    wire box = de && y >= 10'd16 && row <= 5'd11 && row_shown && row_y < 5'd22 &&
                x >= 11'd16 && rel_x < row_letters * 12;
     wire [3:0] letter = rel_x / 12;
     wire [3:0] gx = (rel_x % 12) >> 1;
@@ -278,6 +288,15 @@ module fps_osd #(
                 5:symbol={1'b0,flk_bcd[11:8]};
                 6:symbol={1'b0,flk_bcd[7:4]};
                 7:symbol={1'b0,flk_bcd[3:0]};
+                default:symbol=G_BLANK;
+            endcase
+            5'd11: case(letter)
+                0:symbol=playing ? G_P : G_F; 1:symbol=playing ? G_L : G_R;
+                2:symbol=playing ? G_Y : G_Z;
+                4:symbol=G_DASH;
+                5:symbol={3'd0, back_hundreds};
+                6:symbol={1'b0, back_tens};
+                7:symbol={1'b0, back_ones};
                 default:symbol=G_BLANK;
             endcase
             default: case(letter)
