@@ -19,6 +19,7 @@
         <efx:design_file name="src/edge/shape_detector.v" version="default" library="default" />
         <efx:design_file name="src/edge/shape_overlay.v" version="default" library="default" />
         <efx:design_file name="src/edge/shape_debug_osd.v" version="default" library="default" />
+        <efx:design_file name="src/edge/edge_auto_threshold.v" version="default" library="default" />
         <efx:design_file name="src/edge/shape_tracker.v" version="default" library="default" />
         <efx:design_file name="src/edge/digit_reader.v" version="default" library="default" />
         <efx:design_file name="src/edge/digit_overlay.v" version="default" library="default" />
@@ -187,7 +188,7 @@
         <efx:param name="active_capture_clk_edge" value="negedge" value_type="e_option" />
         <efx:param name="release_tri_then_reset" value="on" value_type="e_bool" />
         <efx:param name="enable_external_master_clock" value="off" value_type="e_bool" />
-        <efx:param name="jtag_usercode" value="0x20261044" value_type="e_string" />
+        <efx:param name="jtag_usercode" value="0x20261045" value_type="e_string" />
         <efx:param name="generate_bit" value="on" value_type="e_bool" />
         <efx:param name="generate_bitbin" value="on" value_type="e_bool" />
         <efx:param name="generate_hex" value="on" value_type="e_bool" />
