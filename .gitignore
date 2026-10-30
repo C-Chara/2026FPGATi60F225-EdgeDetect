@@ -4,10 +4,10 @@ work_pnr/
 work_pt/
 *.peri.xml.bak
 
-# Build outputs: keep only the tagged releases
+# Build outputs: only the final release is published
 # (outflow/Ti60_Demo_<tag>_<yyyymmdd>.bit / .timing.rpt / .place.rpt / .hex)
 outflow/*
-!outflow/Ti60_Demo_*_2026????.*
+!outflow/Ti60_Demo_replay4s_20261030.*
 
 # Simulator caches inside generated IP testbenches
 ip/**/Testbench/work/
@@ -18,3 +18,7 @@ sim/work/
 *.fst
 *.wlf
 sim/out/
+
+# Local notes, not part of the submission
+OPUS_HANDOFF_20261013.md
+MANIFEST_SHA256.txt
