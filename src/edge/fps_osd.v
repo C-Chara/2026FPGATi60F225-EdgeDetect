@@ -20,7 +20,10 @@ module fps_osd #(
     parameter SHOW_PHASE = 1'b0,
     // 1: only FPS, THR, MED, REC, the replay line FRZ -nnn / PLY -nnn
     //    (frames before the newest, while frozen) and NOISE (while on).
-    parameter COMPACT = 1'b0
+    parameter COMPACT = 1'b0,
+    // 1: display mode name in the top-right corner (display_mode input).
+    parameter SHOW_MODE = 1'b0,
+    parameter integer H_ACTIVE = 1280
 )(
     input wire clk, rst_n, vs, de,
     input wire [23:0] rgb_in,
@@ -43,6 +46,7 @@ module fps_osd #(
     input wire frozen,
     input wire playing,
     input wire [7:0] replay_back,
+    input wire [2:0] display_mode,
     output wire [23:0] rgb_out
 );
     reg [10:0] x = 0;
@@ -307,8 +311,35 @@ module fps_osd #(
             endcase
         endcase
     end
+    // Display mode name, right-aligned in the top-right corner (first row):
+    // 0 GRAY, 1 EDGE, 2 COLOR, 3 SPLIT, 4 MOTION (frame difference).
+    localparam [10:0] MODE_X = H_ACTIVE - 16 - 6 * 12;
+    wire [10:0] mode_rel_x = x - MODE_X;
+    wire [3:0]  mode_letter = mode_rel_x / 12;
+    wire [3:0]  mode_len = (display_mode == 3'd4) ? 4'd6 :
+                           (display_mode == 3'd2 || display_mode == 3'd3) ? 4'd5 : 4'd4;
+    wire [3:0]  mode_pos = mode_letter + mode_len - 4'd6;   // letter within the name
+    wire mode_box = SHOW_MODE && de && y >= 10'd16 && y < 10'd38 &&
+                    x >= MODE_X && mode_rel_x < 11'd72 && mode_letter >= 4'd6 - mode_len;
+    reg [4:0] mode_symbol;
+    always @* begin
+        mode_symbol = G_BLANK;
+        case(display_mode)
+            3'd0: case(mode_pos) 0:mode_symbol=G_G; 1:mode_symbol=G_R; 2:mode_symbol=G_A; 3:mode_symbol=G_Y; default:; endcase
+            3'd1: case(mode_pos) 0:mode_symbol=G_E; 1:mode_symbol=G_D; 2:mode_symbol=G_G; 3:mode_symbol=G_E; default:; endcase
+            3'd2: case(mode_pos) 0:mode_symbol=G_C; 1:mode_symbol=G_O; 2:mode_symbol=G_L; 3:mode_symbol=G_O; 4:mode_symbol=G_R; default:; endcase
+            3'd3: case(mode_pos) 0:mode_symbol=G_S; 1:mode_symbol=G_P; 2:mode_symbol=G_L; 3:mode_symbol=G_I; 4:mode_symbol=G_T; default:; endcase
+            default: case(mode_pos) 0:mode_symbol=G_M; 1:mode_symbol=G_O; 2:mode_symbol=G_T; 3:mode_symbol=G_I; 4:mode_symbol=G_O; 5:mode_symbol=G_N; default:; endcase
+        endcase
+    end
+    wire [3:0] mode_gx = (mode_rel_x % 12) >> 1;
+    wire [3:0] mode_gy = (y - 10'd16) >> 1;
+    wire [34:0] mode_bits = glyph(mode_symbol);
+    wire mode_ink = mode_gx<5 && mode_gy<7 && mode_bits[34-(mode_gy*5+mode_gx)];
+
     wire [34:0] bits = glyph(symbol);
     wire ink = gx<5 && gy<7 && bits[34-(gy*5+gx)];
     wire [23:0] ink_rgb = (row == 5'd4 && focus_mode) ? 24'hffff00 : 24'h00ff80;
-    assign rgb_out = box ? (ink ? ink_rgb : 24'h101010) : rgb_in;
+    assign rgb_out = box ? (ink ? ink_rgb : 24'h101010) :
+                     mode_box ? (mode_ink ? 24'h00ff80 : 24'h101010) : rgb_in;
 endmodule
