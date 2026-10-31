@@ -7,7 +7,7 @@ work_pt/
 # Build outputs: only the final release is published
 # (outflow/Ti60_Demo_<tag>_<yyyymmdd>.bit / .timing.rpt / .place.rpt / .hex)
 outflow/*
-!outflow/Ti60_Demo_replay4s_20261030.*
+!outflow/Ti60_Demo_final_20261031.*
 
 # Simulator caches inside generated IP testbenches
 ip/**/Testbench/work/

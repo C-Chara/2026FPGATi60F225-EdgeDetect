@@ -29,12 +29,12 @@ OV5640 摄像头 → Ti60F225 FPGA 全硬件流水线处理 → 1280×720@60Hz H
 
 | 资源 | 用量 |
 |---|---|
-| 逻辑 XLR | 52625 / 60800（86.6%） |
+| 逻辑 XLR | 52657 / 60800（86.6%） |
 | 存储块 | 253 / 256 |
 | DSP | 89 / 160 |
-| 时序 | 全部收敛，最差余量 +0.184 ns |
+| 时序 | 全部收敛，最差余量 +0.273 ns |
 
-完整报告：`outflow/Ti60_Demo_replay4s_20261030.timing.rpt` 和 `outflow/Ti60_Demo_replay4s_20261030.place.rpt`。
+完整报告：`outflow/Ti60_Demo_final_20261031.timing.rpt` 和 `outflow/Ti60_Demo_final_20261031.place.rpt`。
 
 ## 硬件
 
@@ -44,7 +44,7 @@ OV5640 摄像头 → Ti60F225 FPGA 全硬件流水线处理 → 1280×720@60Hz H
 
 ## 快速上手
 
-**直接运行：** 最终比特流是 `outflow/Ti60_Demo_replay4s_20261030.bit`，flash 镜像是同名的 `.hex`。用 Efinity Programmer 通过 JTAG 下载，或写入 SPI flash。
+**直接运行：** 最终比特流是 `outflow/Ti60_Demo_final_20261031.bit`，flash 镜像是同名的 `.hex`。用 Efinity Programmer 通过 JTAG 下载，或写入 SPI flash。
 
 **从源码编译：** 用 Efinity 2026.1 打开 `Ti60_Demo.xml`，顶层模块是 `example_top`，直接运行完整编译流程即可。
 

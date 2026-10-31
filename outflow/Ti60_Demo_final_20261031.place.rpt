@@ -1,7 +1,7 @@
 
 Elitestek FPGA Placement and Routing.
 Version: 2026.1.132 
-Date: Fri Oct 30 21:27:04 2026
+Date: Sat Oct 31 14:14:05 2026
 
 Copyright (C) 2013 - 2026 Efinix, Inc. All rights reserved.
  
@@ -120,7 +120,7 @@ Top-level Entity Name: Ti60_Demo
 
 ----------- Module Resource Usage Distribution Estimates (end) ----------
 
-Elapsed time for packing: 0 hours 0 minutes 2 seconds
+Elapsed time for packing: 0 hours 0 minutes 3 seconds
 ---------- Resource Summary (begin) ----------
 Inputs: 66 / 1703 (3.88%)
 Outputs: 485 / 2267 (21.39%)
@@ -129,19 +129,19 @@ Regional Clocks (RBUF): 0 / 32 (0.00%)
 	RBUF: Core: 0 / 16 (0.00%)
 	RBUF: Periphery: 0 / 8 (0.00%)
 	RBUF: Multi-Region: 0 / 8 (0.00%)
-XLRs: 52625 / 60800 (86.55%)
-	XLRs needed for LUT4: 26411 / 60800 (43.44%)
-	XLRs needed for LUT4 + FF: 7920 / 60800 (13.03%)
+XLRs: 52657 / 60800 (86.61%)
+	XLRs needed for LUT4: 26433 / 60800 (43.48%)
+	XLRs needed for LUT4 + FF: 7922 / 60800 (13.03%)
 	XLRs needed for COMB4: 0 / 60800 (0.00%)
 	XLRs needed for COMB4 + FF: 0 / 60800 (0.00%)
-	XLRs needed for Adder: 6441 / 60800 (10.59%)
+	XLRs needed for Adder: 6451 / 60800 (10.61%)
 	XLRs needed for Adder + FF: 331 / 60800 (0.54%)
 	XLRs needed for SRL8: 698 / 14720 (4.74%)
 	XLRs needed for SRL8 + FF: 0 / 14720 (0.00%)
-	XLRs needed for FF: 10824 / 60800 (17.80%)
+	XLRs needed for FF: 10822 / 60800 (17.80%)
 	XLRs needed for Routing: 0 / 60800 (0.00%)
 Memory Blocks: 253 / 256 (98.83%)
 DSP Blocks: 89 / 160 (55.62%)
 ---------- Resource Summary (end) ----------
 
-Elapsed time for placement: 0 hours 1 minutes 21 seconds
+Elapsed time for placement: 0 hours 1 minutes 17 seconds
